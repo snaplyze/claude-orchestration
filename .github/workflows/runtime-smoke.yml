@@ -17,8 +17,12 @@ concurrency:
   cancel-in-progress: true
 jobs:
   smoke:
-    # Fork PRs never receive secrets; only same-repository PRs and manual runs use the subscription.
-    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    # The token is the owner's personal subscription (Consumer Terms forbid sharing account access), so only runs
+    # started or re-run by the owner may use it; fork PRs never receive secrets anyway.
+    if: >-
+      github.actor == github.repository_owner &&
+      github.triggering_actor == github.repository_owner &&
+      (github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
