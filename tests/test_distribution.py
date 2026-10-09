@@ -45,6 +45,16 @@ class DistributionTests(unittest.TestCase):
             session=[{"hook_event_name":"Stop","effort":{"level":"medium"},"transcript_path":transcript("a","claude-opus-5-5")}]
             self.assertTrue(runtime_smoke.check_agent_session(session,{"model":"opus","effort":"high"},"reviewer")["ok"])
             self.assertFalse(runtime_smoke.check_agent_session(session,{"model":"haiku","effort":"low"},"explorer")["ok"])
+    def test_runtime_smoke_forgets_only_its_own_sessions(self):
+        with tempfile.TemporaryDirectory() as td:
+            cfg=Path(td)/"cfg"; work=cfg/"projects/-tmp-smoke-roles"; (work/"s1/subagents").mkdir(parents=True)
+            (work/"s1.jsonl").write_text("{}\n"); (work/"s1/subagents/a.jsonl").write_text("{}\n"); (work/"memory").mkdir()
+            other=cfg/"projects/-home-me-repo"; other.mkdir(); (other/"keep.jsonl").write_text("{}\n")
+            outside=Path(td)/"outside.jsonl"; outside.write_text("{}\n"); at_root=cfg/"projects/root.jsonl"; at_root.write_text("{}\n")
+            events=[{"hook_event_name":"Stop","transcript_path":str(work/"s1.jsonl")},{"hook_event_name":"Stop","transcript_path":str(outside)},{"hook_event_name":"Stop","transcript_path":str(at_root)},
+                    {"hook_event_name":"SubagentStop","agent_id":"a","transcript_path":str(other/"keep.jsonl")}]
+            with mock.patch.dict(os.environ,{"CLAUDE_CONFIG_DIR":str(cfg)}): removed=runtime_smoke.forget_sessions(events)
+            self.assertEqual(removed,1); self.assertFalse(work.exists()); self.assertTrue((other/"keep.jsonl").exists()); self.assertTrue(outside.exists()); self.assertTrue(at_root.exists())
     def test_every_profile_materializes_declared_frontmatter(self):
         for profile_path in sorted((ROOT/"profiles").glob("*.json")):
             name=profile_path.stem; declared=json.loads(profile_path.read_text())

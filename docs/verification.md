@@ -61,6 +61,10 @@ installed profile is checked against its own values. Modes:
 - `--interactive`: repeat the role and skill checks in a real interactive
   session driven through tmux, run from a folder Claude Code already trusts.
 
+Each run deletes the session transcripts it created under Claude Code's
+`projects` directory after reading them; `--keep-sessions` keeps them for
+debugging.
+
 Runs use whatever account `claude` is logged in with — locally, your
 subscription; usage counts against its limits, and the printed cost is
 Claude Code's estimate (about $0.05–0.15 per mode). `--budget` caps each run.

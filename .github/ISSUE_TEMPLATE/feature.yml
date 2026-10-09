@@ -1,0 +1,23 @@
+name: Feature request
+description: Propose a change to routing, roles, profiles, installation, or verification.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is hard or impossible today, and for whom?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: The smallest change that solves it, and what it would replace.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Claude Code documentation, measurements, or runtime_smoke output that supports the change.
