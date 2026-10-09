@@ -1,18 +1,17 @@
 # Changelog
 
-## Unreleased
+## 1.3.0 — 2026-10-09
 
 - Add `scripts/runtime_smoke.py`: a headless Claude Code run that checks each role's and the skill's effective model and effort against frontmatter (hook and transcript evidence); `--tool-surface` checks that read-only roles cannot write and the reviewer keeps its no-write instruction; `--agent-path` checks `claude --agent` sessions; `--interactive` drives a TUI session through tmux. New `runtime-smoke.yml` workflow runs it in CI with a subscription token (`CLAUDE_CODE_OAUTH_TOKEN`).
 - `doctor.py` checks that the topology tables in `docs/models-and-plans.md` and `docs/architecture.md` match the profiles and plugin frontmatter; fix the stale explorer entries for `max-20x-thorough` and `api-quality` (Haiku low since 1.2.0).
-
 - Installer: record and restore prior values of managed settings keys; keep the installed profile when rerun without `--profile`; leave unmanaged `settings.json` untouched on uninstall.
 - Installer: reject symlinks anywhere in the plugin destination and unknown profile names; swap the plugin in by rename beside the destination; restore exact settings bytes on failure.
 - `doctor.py` is the single static validator (adds profile value checks and marketplace-topology equality); tests cover late-failure rollback and no longer duplicate static checks.
 - CI adds Python 3.11 on Linux and `setup.sh`/`setup.ps1` smoke tests.
 - Orchestrate skill names `AGENTS.md` alongside `CLAUDE.md` as project instructions.
-
 - Use GitHub-hosted Linux, macOS, and Windows CI with Python 3.12/3.13 by owner decision; retain pinned actions and read-only checkout credentials.
 - Limit push CI to `main`, retain PR/manual runs, and bound job duration and superseded runs.
+- Agent rules: unified policy v15 in `AGENTS.md` with the project runner mode `github-hosted`; the runtime-smoke job uses the subscription token only for runs the repository owner authored and started.
 
 ## 1.2.0 — 2026-10-08
 

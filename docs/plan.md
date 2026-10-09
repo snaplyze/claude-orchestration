@@ -4,10 +4,10 @@ Single planning entry point and task register (rules: `AGENTS.md`). One fact, on
 
 ## Current record
 
-- Status 2026-10-09: runtime remainder R-04..R-07 on branch `feat/runtime-remainder` from `f436857`. Earlier: R-01..R-03 and D-07 in PR #10, policy v15 in PR #8.
-- Runtime (Claude Code 2.1.295, subscription): headless and interactive roles/skill PASS; `--agent` applies model, not effort; reviewer no-write instruction PASS; default permission mode PASS.
+- Status 2026-10-09: release 1.3.0 prepared on branch `release/1.3.0` (owner decision: full release — version, tag `v1.3.0`, GitHub Release). Earlier: R-04..R-07 in PR #12, owner-only runtime CI in PR #14.
+- Runtime (Claude Code 2.1.295, subscription): local headless and interactive PASS; hosted `runtime-smoke` run 37912677050 on `4aebad8` PASS 20/20 (bundled 14, `max-20x-thorough` 6), token masked in logs.
 - Blockers: none. Open audit IDs: none.
-- Next: owner creates the `CLAUDE_CODE_OAUTH_TOKEN` secret (R-07), then a manual `runtime-smoke` run; release 1.3.0 needs an owner decision.
+- Next: merge the release PR, tag `v1.3.0` on the merge commit, publish the GitHub Release. No other queued tasks.
 
 ## Tasks
 
@@ -30,7 +30,7 @@ Status values: READY, BLOCKED, CONFIGURED_LOCAL (done locally, external acceptan
 | R-04 | P3 | DONE | Reviewer no-write: frontmatter cannot limit Bash per command (`tools` takes whole tools; `Bash(...)` in `disallowedTools` removes Bash), so `--tool-surface` probes the instruction. | R-02 | No write tool and no file when asked to write. Done: PASS; documented as behavior, not a guarantee, with the `permissions.deny` alternative. |
 | R-05 | P3 | DONE | `claude --agent orchestration:<role>`: `--agent-path` mode. | R-01 | Agent model applied. Done: model applied for all 5 roles; effort stays at session level (docs specify only model and tools for `--agent`; matches upstream #82259) — documented with the `--effort` workaround, not a plugin defect. |
 | R-06 | P3 | DONE | Interactive TUI path: `--interactive` drives a real session through tmux, snapshotting the transcript per step (background subagents span several turns). | R-01 | Roles and skill PASS interactively. Done: 6/6 PASS. |
-| R-07 | P3 | CONFIGURED_LOCAL | Runtime smoke in CI on the owner's subscription: `runtime-smoke.yml` (GitHub-hosted Ubuntu, Claude Code 2.1.295 pinned, `CLAUDE_CODE_OAUTH_TOKEN` secret, manual + same-repo PRs touching plugin/profiles/installer; only runs authored and started by the repository owner, because the token is a personal subscription; skipped without the secret). | Owner creates the secret | A hosted run with the secret passes the headless modes for the bundled plugin and `max-20x-thorough`. Local emulation of CI's default permission mode PASS. |
+| R-07 | P3 | DONE | Runtime smoke in CI on the owner's subscription: `runtime-smoke.yml` (GitHub-hosted Ubuntu, Claude Code 2.1.295 pinned, `CLAUDE_CODE_OAUTH_TOKEN` secret, manual + same-repo PRs touching plugin/profiles/installer; only runs authored and started by the repository owner, because the token is a personal subscription; skipped without the secret). | Owner creates the secret | A hosted run with the secret passes the headless modes for the bundled plugin and `max-20x-thorough`. Local emulation of CI's default permission mode PASS. Done: owner added the secret; manual run 37912677050 on `4aebad8` PASS 20/20, token masked (`***`) in logs. |
 
 ## History (was → now → reason)
 
