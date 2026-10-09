@@ -55,6 +55,9 @@ installed profile is checked against its own values. Modes:
   it detects writes;
 - `--agent-path`: start each role as the session agent (`claude --agent`);
   the agent's model is required, its effort is reported only (see below);
+- `--use-installed`: test the plugin Claude Code already has installed (no
+  `--plugin-dir`), with `--plugin-dir` naming its files for the expected
+  values, for example `~/.claude-orchestration/plugin` after a user install;
 - `--interactive`: repeat the role and skill checks in a real interactive
   session driven through tmux, run from a folder Claude Code already trusts.
 
