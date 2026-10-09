@@ -93,7 +93,7 @@ def write_settings(work: Path) -> Path:
     return settings
 
 
-def run_interactive(claude: str, steps: list[tuple[str, object]], plugin_dir: Path, work: Path, model: str, timeout: float = 600) -> list[list[dict]]:
+def run_interactive(claude: str, steps: list[tuple[str, object]], plugin_dir: Path | None, work: Path, model: str, timeout: float = 600) -> list[list[dict]]:
     """Drive a real interactive session in tmux; each step sends a prompt and waits until done(events) is true.
 
     Returns the events seen by the end of each step, with the main transcript snapshotted at that moment,
@@ -104,7 +104,8 @@ def run_interactive(claude: str, steps: list[tuple[str, object]], plugin_dir: Pa
     if not shutil.which("tmux"):
         raise RuntimeError("--interactive needs tmux")
     session, log = f"orchestration-smoke-{work.parent.name[-8:]}", work / "hooks.jsonl"
-    command = f'{claude} --plugin-dir "{plugin_dir}" --settings "{write_settings(work)}" --model {model}'
+    plugin_arg = f' --plugin-dir "{plugin_dir}"' if plugin_dir else ""
+    command = f'{claude}{plugin_arg} --settings "{write_settings(work)}" --model {model}'
     subprocess.run(["tmux", "new-session", "-d", "-s", session, "-x", "200", "-y", "50", command], check=True)
     snapshots = []
     try:
@@ -129,8 +130,8 @@ def run_interactive(claude: str, steps: list[tuple[str, object]], plugin_dir: Pa
     return snapshots
 
 
-def run_claude(claude: str, prompt: str, plugin_dir: Path, work: Path, budget: float, model: str | None, extra: tuple = ()) -> float:
-    args = [claude, "-p", prompt, "--plugin-dir", str(plugin_dir), "--settings", str(write_settings(work)), "--output-format", "json", "--max-budget-usd", str(budget)]
+def run_claude(claude: str, prompt: str, plugin_dir: Path | None, work: Path, budget: float, model: str | None, extra: tuple = ()) -> float:
+    args = [claude, "-p", prompt, *(["--plugin-dir", str(plugin_dir)] if plugin_dir else []), "--settings", str(write_settings(work)), "--output-format", "json", "--max-budget-usd", str(budget)]
     if model:
         args += ["--model", model]
     args += list(extra)
@@ -143,6 +144,7 @@ def run_claude(claude: str, prompt: str, plugin_dir: Path, work: Path, budget: f
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--plugin-dir", type=Path, default=PLUGIN, help="plugin directory to test (default: bundled plugin/)")
+    parser.add_argument("--use-installed", action="store_true", help="test the plugin Claude Code already has installed (no --plugin-dir); --plugin-dir then names its files for the expected values")
     parser.add_argument("--roles", default=",".join(ROLES), help="comma-separated roles to dispatch")
     parser.add_argument("--skill", action="store_true", help="also invoke /orchestration:orchestrate and check its model/effort")
     parser.add_argument("--tool-surface", action="store_true", help="also ask read-only roles to create a file and check they cannot")
@@ -152,7 +154,8 @@ def main() -> int:
     parser.add_argument("--budget", type=float, default=2.0, help="maximum USD per claude run")
     parser.add_argument("--claude", default="claude")
     args = parser.parse_args()
-    plugin_dir, roles = args.plugin_dir.resolve(), [r for r in args.roles.split(",") if r]
+    plugin_dir, roles = args.plugin_dir.expanduser().resolve(), [r for r in args.roles.split(",") if r]
+    load_dir = None if args.use_installed else plugin_dir
     unknown = set(roles) - set(ROLES)
     if unknown:
         parser.error(f"unknown roles: {sorted(unknown)}")
@@ -162,22 +165,22 @@ def main() -> int:
             work = Path(td) / "roles"; work.mkdir()
             names = ", ".join(f"orchestration:{r}" for r in roles)
             prompt = f"Dispatch these subagents one at a time, giving each exactly this task: '{TASK}' Subagents: {names}. Do nothing else; after all of them return, reply DONE."
-            cost += run_claude(args.claude, prompt, plugin_dir, work, args.budget, args.coordinator_model)
+            cost += run_claude(args.claude, prompt, load_dir, work, args.budget, args.coordinator_model)
             results += check_roles(load_events(work / "hooks.jsonl"), plugin_dir, roles)
         if args.skill:
             work = Path(td) / "skill"; work.mkdir()
-            cost += run_claude(args.claude, f"/orchestration:orchestrate Economy mode. {TASK} Do not delegate.", plugin_dir, work, args.budget, args.coordinator_model)
+            cost += run_claude(args.claude, f"/orchestration:orchestrate Economy mode. {TASK} Do not delegate.", load_dir, work, args.budget, args.coordinator_model)
             results.append(check_skill(load_events(work / "hooks.jsonl"), plugin_dir))
         if args.tool_surface:
             work = Path(td) / "tools"; work.mkdir()
             tasks = " ".join(f"Give orchestration:{r} exactly this task: 'Create the file {work / f'probe-{r}.txt'} containing OK. If no available tool can create files, reply CANNOT.'" for r in READ_ONLY + NO_WRITE_BY_INSTRUCTION)
-            cost += run_claude(args.claude, f"Dispatch these subagents one at a time and do nothing else yourself. {tasks} Then reply DONE.", plugin_dir, work, args.budget, args.coordinator_model)
+            cost += run_claude(args.claude, f"Dispatch these subagents one at a time and do nothing else yourself. {tasks} Then reply DONE.", load_dir, work, args.budget, args.coordinator_model)
             events = load_events(work / "hooks.jsonl")
             results += check_read_only(events, work) + check_read_only(events, work, NO_WRITE_BY_INSTRUCTION, "no-write (instruction)")
         if args.agent_path:
             for role in roles:
                 work = Path(td) / f"agent-{role}"; work.mkdir()
-                cost += run_claude(args.claude, TASK, plugin_dir, work, args.budget, None, ("--agent", f"orchestration:{role}"))
+                cost += run_claude(args.claude, TASK, load_dir, work, args.budget, None, ("--agent", f"orchestration:{role}"))
                 results.append(check_agent_session(load_events(work / "hooks.jsonl"), frontmatter(plugin_dir / "agents" / f"{role}.md"), role))
         if args.interactive:
             work = Path(td) / "interactive"; work.mkdir()
@@ -187,7 +190,7 @@ def main() -> int:
             steps = [(f"/orchestration:orchestrate Economy mode. {TASK} Do not delegate.", stops(1))]
             if roles:  # interactive sessions may run subagents in the background over several turns
                 steps.append((f"Dispatch these subagents, giving each exactly this task: '{TASK}' Subagents: {names}. Do nothing else; when all have returned, reply DONE.", role_stops))
-            snapshots = run_interactive(args.claude, steps, plugin_dir, work, args.coordinator_model)
+            snapshots = run_interactive(args.claude, steps, load_dir, work, args.coordinator_model)
             checks = [check_skill(snapshots[0], plugin_dir), *(check_roles(snapshots[-1], plugin_dir, roles) if roles else [])]
             results += [dict(r, name=f"{r['name']} (interactive)") for r in checks]
     width = max(len(r["name"]) for r in results)

@@ -41,6 +41,14 @@ Inside Claude Code:
 /orchestration:orchestrate Normal mode. Audit this change and use only useful bounded delegation.
 ```
 
+User scope for all projects with a non-default profile (local marketplace, optional default-orchestration rule in your user `CLAUDE.md`):
+
+```bash
+python scripts/install.py --user --profile max-20x-thorough --default-rule
+claude plugin marketplace add ~/.claude-orchestration
+claude plugin install orchestration@orchestration-local --scope user
+```
+
 On Windows:
 
 ```powershell

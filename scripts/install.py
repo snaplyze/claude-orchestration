@@ -8,6 +8,9 @@ ROOT = Path(__file__).resolve().parents[1]
 PLUGIN = ROOT / "plugin"
 PROFILES = ROOT / "profiles"
 MARKER = "claude-orchestration"
+LOCAL_MARKETPLACE = "orchestration-local"
+RULE_TEMPLATE = Path(__file__).resolve().parent / "default-orchestration-rule.md"
+RULE_BEGIN, RULE_END = "<!-- BEGIN claude-orchestration:managed -->", "<!-- END claude-orchestration:managed -->"
 
 
 def load_json(path: Path) -> dict:
@@ -111,6 +114,48 @@ def plugin_destination(target: Path) -> Path:
     return path
 
 
+def swap_in(dest: Path, profile: dict | None, path: Path | None = None, data: bytes | None = None) -> Path:
+    """Stage the plugin (with profile) beside dest, optionally write one file, and swap the plugin in.
+
+    On failure the file's previous bytes and the previous plugin directory are restored.
+    """
+    old = path.read_bytes() if path and path.exists() else None
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    work = Path(tempfile.mkdtemp(prefix=".orchestration-", dir=dest.parent))
+    stage, previous = work / "stage", work / "previous"
+    swapped = False
+    try:
+        shutil.copytree(PLUGIN, stage)
+        if profile:
+            materialize_profile(stage, profile)
+        if path and data is not None and data != old:
+            atomic_write(path, data)
+        if dest.exists():
+            os.replace(dest, previous)
+        os.replace(stage, dest)
+        swapped = True
+    except BaseException:
+        if path:
+            current = path.read_bytes() if path.exists() else None
+            if current != old:
+                if old is None:
+                    path.unlink()
+                else:
+                    atomic_write(path, old)
+        if previous.exists():
+            if dest.exists():
+                shutil.rmtree(dest)
+            os.replace(previous, dest)
+        raise
+    finally:
+        if previous.exists() and not swapped:  # the restore itself failed: keep the only copy of the old plugin
+            shutil.rmtree(stage, ignore_errors=True)
+            print(f"Previous plugin kept at {previous}; move it back to {dest}", file=sys.stderr)
+        else:
+            shutil.rmtree(work, ignore_errors=True)
+    return dest
+
+
 def install(target: Path, profile_name: str | None = None) -> Path:
     target = target.resolve()
     if not target.is_dir():
@@ -122,43 +167,13 @@ def install(target: Path, profile_name: str | None = None) -> Path:
         raise ValueError("plugin destination is not a directory")
 
     settings_path = target / ".claude/settings.json"
-    old_settings = settings_path.read_bytes() if settings_path.exists() else None
     settings = load_json(settings_path)
     if profile_name is None and isinstance(settings.get(MARKER), dict):
         profile_name = settings[MARKER].get("profile")
     profile = profile_data(profile_name) if profile_name else None
-
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    work = Path(tempfile.mkdtemp(prefix=".orchestration-", dir=dest.parent))
-    stage, previous = work / "stage", work / "previous"
-    try:
-        shutil.copytree(PLUGIN, stage)
-        if profile:
-            materialize_profile(stage, profile)
-            apply_settings(settings, profile_name, profile)
-            atomic_write(settings_path, dump_settings(settings))
-        if dest.exists():
-            os.replace(dest, previous)
-        os.replace(stage, dest)
-    except BaseException:
-        current = settings_path.read_bytes() if settings_path.exists() else None
-        if current != old_settings:
-            if old_settings is None:
-                settings_path.unlink()
-            else:
-                atomic_write(settings_path, old_settings)
-        if previous.exists():
-            if dest.exists():
-                shutil.rmtree(dest)
-            os.replace(previous, dest)
-        raise
-    finally:
-        if previous.exists():
-            shutil.rmtree(stage, ignore_errors=True)
-            print(f"Previous plugin kept at {previous}; move it back to {dest}", file=sys.stderr)
-        else:
-            shutil.rmtree(work, ignore_errors=True)
-    return dest
+    if profile:
+        apply_settings(settings, profile_name, profile)
+    return swap_in(dest, profile, settings_path, dump_settings(settings) if profile else None)
 
 
 def uninstall(target: Path) -> None:
@@ -172,12 +187,80 @@ def uninstall(target: Path) -> None:
         atomic_write(settings_path, dump_settings(settings))
 
 
+def with_rule(text: str, block: str | None) -> str:
+    """Replace, append, or (block=None) remove the managed default-orchestration block in a CLAUDE.md text."""
+    start, end = text.find(RULE_BEGIN), text.find(RULE_END)
+    if start != -1 and end != -1:
+        text = (text[:start].rstrip("\n") + "\n\n" + text[end + len(RULE_END):].lstrip("\n")).strip("\n")
+    if block:
+        text = (text + "\n\n" if text else "") + f"{RULE_BEGIN}\n{block.strip()}\n{RULE_END}"
+    return text + "\n" if text else ""
+
+
+def user_paths(root: Path) -> tuple[Path, Path]:
+    root = root.expanduser().resolve()
+    for path in (root, root / ".claude-plugin", root / "plugin"):
+        if path.is_symlink():
+            raise ValueError(f"refusing symlink in marketplace directory: {path}")
+    if root == ROOT or ROOT in root.parents:
+        raise ValueError("marketplace directory must be outside the distribution checkout")
+    return root, root / "plugin"
+
+
+def install_user(root: Path, profile_name: str, rule_path: Path | None = None) -> Path:
+    """Build a local marketplace whose plugin carries the profile, for a user-scope install with `claude plugin`."""
+    root, dest = user_paths(root)
+    profile = profile_data(profile_name)
+    manifest = {"name": LOCAL_MARKETPLACE, "description": f"Local Claude Orchestration build ({profile_name} profile)", "owner": {"name": "local"}, "plugins": [{"name": "orchestration", "source": "./plugin",
+                "description": f"Claude Orchestration with the {profile_name} profile"}]}
+    atomic_write(root / ".claude-plugin/marketplace.json", (json.dumps(manifest, indent=2) + "\n").encode("utf-8"))
+    data = None
+    if rule_path:
+        current = rule_path.read_text(encoding="utf-8") if rule_path.exists() else ""
+        data = with_rule(current, RULE_TEMPLATE.read_text(encoding="utf-8")).encode("utf-8")
+    return swap_in(dest, profile, rule_path, data)
+
+
+def uninstall_user(root: Path, rule_path: Path | None = None) -> None:
+    root, _ = user_paths(root)
+    if rule_path and rule_path.exists():
+        text = with_rule(rule_path.read_text(encoding="utf-8"), None)
+        if text:
+            atomic_write(rule_path, text.encode("utf-8"))
+        else:
+            rule_path.unlink()
+    if root.exists():
+        shutil.rmtree(root)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("target", type=Path)
+    parser.add_argument("target", type=Path, nargs="?", help="project directory (omit with --user)")
     parser.add_argument("--profile")
     parser.add_argument("--uninstall", action="store_true")
+    parser.add_argument("--user", action="store_true", help="build a local marketplace for a user-scope install instead of a project install")
+    parser.add_argument("--marketplace-dir", type=Path, default=Path("~/.claude-orchestration"), help="local marketplace directory for --user")
+    parser.add_argument("--default-rule", action="store_true", help="with --user: add (or remove) the managed default-orchestration block in the user CLAUDE.md")
     args = parser.parse_args()
+    config_dir = Path(os.environ.get("CLAUDE_CONFIG_DIR") or "~/.claude").expanduser()
+    rule_path = config_dir / "CLAUDE.md" if args.default_rule else None
+    if args.user:
+        if args.target:
+            parser.error("--user takes no target directory")
+        if args.uninstall:
+            uninstall_user(args.marketplace_dir, rule_path)
+            print(f"Removed {args.marketplace_dir}" + (f" and the managed block in {rule_path}" if rule_path else ""))
+            print(f"Also run: claude plugin uninstall orchestration@{LOCAL_MARKETPLACE} && claude plugin marketplace remove {LOCAL_MARKETPLACE}")
+            return
+        if not args.profile:
+            parser.error("--user needs --profile")
+        dest = install_user(args.marketplace_dir, args.profile, rule_path)
+        print(f"Built local marketplace {LOCAL_MARKETPLACE} with plugin at {dest}" + (f"; default rule in {rule_path}" if rule_path else ""))
+        print(f"First time: claude plugin marketplace add {dest.parent} && claude plugin install orchestration@{LOCAL_MARKETPLACE} --scope user")
+        print("Later runs update the plugin in place; restart Claude Code sessions to pick it up.")
+        return
+    if args.target is None or args.default_rule:
+        parser.error("a project install needs a target directory; --default-rule needs --user")
     if args.uninstall:
         uninstall(args.target)
         print("Uninstalled orchestration plugin")

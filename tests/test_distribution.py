@@ -75,6 +75,7 @@ class DistributionTests(unittest.TestCase):
             r=self.run_install(t); self.assertEqual(r.returncode,0,r.stderr)
             self.assertEqual((t/".claude/settings.json").read_bytes(),before)
             self.assertEqual(frontmatter(t/".claude/plugins/orchestration/skills/orchestrate/SKILL.md")["effort"],"xhigh")
+            self.assertEqual([p.name for p in (t/".claude/plugins").iterdir()],["orchestration"]); self.assertNotIn("kept",r.stderr)
     def test_uninstall_without_marker_leaves_settings_bytes(self):
         with tempfile.TemporaryDirectory() as td:
             t=Path(td); (t/".claude").mkdir(); raw=b'{"a":  1}'; (t/".claude/settings.json").write_bytes(raw)
@@ -108,6 +109,17 @@ class DistributionTests(unittest.TestCase):
             self.assertEqual((t/".claude/settings.json").read_bytes(),before); self.assertFalse(dest.exists())
             kept=[p for p in (t/".claude/plugins").glob(".orchestration-*/*/.claude-plugin/plugin.json")]
             self.assertEqual([p.read_bytes() for p in kept],[manifest])
+    def test_user_marketplace_with_profile_and_managed_rule(self):
+        with tempfile.TemporaryDirectory() as td:
+            t=Path(td); mkt=t/"mkt"; rule=t/"cfg/CLAUDE.md"; rule.parent.mkdir(); rule.write_text("# Mine\n")
+            for _ in range(2): install.install_user(mkt,"max-20x-thorough",rule)
+            m=json.loads((mkt/".claude-plugin/marketplace.json").read_text()); self.assertEqual((m["name"],m["plugins"][0]["name"],m["plugins"][0]["source"]),("orchestration-local","orchestration","./plugin"))
+            self.assertEqual(frontmatter(mkt/"plugin/agents/reviewer.md")["effort"],"xhigh")
+            text=rule.read_text(); self.assertTrue(text.startswith("# Mine\n")); self.assertEqual(text.count(install.RULE_BEGIN),1); self.assertIn("orchestration:worker",text)
+            self.assertEqual(sorted(p.name for p in mkt.iterdir()),[".claude-plugin","plugin"])
+            install.uninstall_user(mkt,rule); self.assertEqual(rule.read_text(),"# Mine\n"); self.assertFalse(mkt.exists())
+            rule.unlink(); install.install_user(mkt,"pro-balanced",rule); install.uninstall_user(mkt,rule); self.assertFalse(rule.exists())
+            with self.assertRaisesRegex(ValueError,"unknown profile"): install.install_user(mkt,"nope")
     def test_symlinks_and_unknown_profile_names_rejected(self):
         with tempfile.TemporaryDirectory() as td:
             t=Path(td)/"project"; ext=Path(td)/"external"; t.mkdir(); ext.mkdir(); (t/".claude").mkdir()

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Installer `--user`: build a local marketplace (`orchestration-local`) whose plugin carries the selected profile, for a user-scope install in all projects; `--default-rule` manages a default-orchestration block in the user `CLAUDE.md`.
+- Fix: a successful reinstall or profile switch no longer leaves the previous plugin in `.claude/plugins/.orchestration-*` or prints "Previous plugin kept" (regression in 1.3.0).
+- `runtime_smoke.py --use-installed` checks an installed plugin instead of `--plugin-dir`.
+
 ## 1.3.0 — 2026-10-09
 
 - Add `scripts/runtime_smoke.py`: a headless Claude Code run that checks each role's and the skill's effective model and effort against frontmatter (hook and transcript evidence); `--tool-surface` checks that read-only roles cannot write and the reviewer keeps its no-write instruction; `--agent-path` checks `claude --agent` sessions; `--interactive` drives a TUI session through tmux. New `runtime-smoke.yml` workflow runs it in CI with a subscription token (`CLAUDE_CODE_OAUTH_TOKEN`).
