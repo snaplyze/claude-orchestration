@@ -1,12 +1,12 @@
 # Installation
 
-Requirements: Python 3.11+ (stated minimum, untested: the CI matrix lists 3.12/3.13; see plan A-11), an existing target project, and Claude Code for runtime use.
+Requirements: Python 3.11+ (CI covers 3.11 on Linux and 3.12/3.13 on Linux, macOS, and Windows), an existing target project, and Claude Code for runtime use.
 
 ```bash
 ./setup.sh /workspace/project --profile pro-balanced
 ```
 
-The plugin is copied to `.claude/plugins/orchestration`; selected profile keys are merged into `.claude/settings.json`. Unrelated settings are preserved and the installer records exactly which keys it owns under `claude-orchestration`. Known gaps (see [plan](plan.md)): a pre-existing `model`/`effortLevel` is overwritten and removed on uninstall, and rerunning without `--profile` resets agent frontmatter to the balanced topology while settings keep the previous profile (A-03).
+The plugin is copied to `.claude/plugins/orchestration`; selected profile keys are merged into `.claude/settings.json`. Unrelated settings are preserved. The installer records under `claude-orchestration` the profile, the keys it owns, and their values before installation; uninstall and profile switches restore those prior values. Rerunning setup without `--profile` refreshes the plugin and keeps the installed profile.
 
 Run it explicitly:
 
@@ -22,4 +22,4 @@ Switch profile by rerunning setup with another `--profile`. Remove managed plugi
 ./setup.sh /workspace/project --uninstall
 ```
 
-The installer refuses a symlink at the managed plugin destination and rolls back plugin/settings state on ordinary failures. It is not a crash-consistent filesystem transaction across power loss or hostile races.
+The installer refuses symlinks at `.claude`, `.claude/plugins`, or `.claude/plugins/orchestration` (so writes cannot leave the target), accepts only profile names from `profiles/`, stages the new copy next to the destination, and swaps it in with a rename. On ordinary failures it restores the previous plugin directory and the exact previous `settings.json` bytes. It is not a crash-consistent filesystem transaction across power loss or hostile races; a crash can leave a `.claude/plugins/.orchestration-*` work directory. If restoring the previous plugin itself fails, the installer keeps that directory and prints where the previous copy is; otherwise the work directory is safe to delete.
