@@ -4,10 +4,10 @@ Single planning entry point and task register (rules: `AGENTS.md`). One fact, on
 
 ## Current record
 
-- Status 2026-10-09: release 1.3.0 prepared on branch `release/1.3.0` (owner decision: full release — version, tag `v1.3.0`, GitHub Release). Earlier: R-04..R-07 in PR #12, owner-only runtime CI in PR #14.
-- Runtime (Claude Code 2.1.295, subscription): local headless and interactive PASS; hosted `runtime-smoke` run 37912677050 on `4aebad8` PASS 20/20 (bundled 14, `max-20x-thorough` 6), token masked in logs.
+- Status 2026-10-09: user-scope install (U-01) and the B-02 fix merged in PR #18 (`b582faf`); installed on the owner's machine with `max-20x-thorough` (Max 20x, confirmed by `claude auth status` / rate-limit tier) and the default-orchestration rule. Earlier: release 1.3.0 (PR #16, tag `v1.3.0`).
+- Runtime (Claude Code 2.1.295, subscription): installed copy 20/20 PASS via `--use-installed`; default rule delegates independent workstreams to `orchestration:*` roles and yields to project rules; hosted `runtime-smoke` on PR #18 PASS 20/20.
 - Blockers: none. Open audit IDs: none.
-- Next: merge the release PR, tag `v1.3.0` on the merge commit, publish the GitHub Release. No other queued tasks.
+- Next: no queued tasks. Unreleased: U-01, B-02 (B-02 fixes a 1.3.0 regression — a 1.3.1 release needs an owner decision).
 
 ## Tasks
 
