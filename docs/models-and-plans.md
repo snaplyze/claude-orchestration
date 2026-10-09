@@ -23,11 +23,11 @@ Local installer profiles materialize both the root settings and each skill/subag
 | `pro-economy` | Sonnet medium | Haiku low | Sonnet medium | Sonnet medium | Sonnet medium | Opus medium |
 | `pro-balanced` | Opus high | Haiku low | Sonnet medium | Sonnet high | Sonnet medium | Opus high |
 | `max-5x-balanced` | Opus high | Haiku low | Sonnet medium | Sonnet high | Sonnet medium | Opus high |
-| `max-20x-thorough` | Opus xhigh | Sonnet medium | Sonnet high | Sonnet high | Sonnet high | Opus xhigh |
+| `max-20x-thorough` | Opus xhigh | Haiku low | Sonnet high | Sonnet high | Sonnet high | Opus xhigh |
 | `team-standard` | Sonnet high | Haiku low | Sonnet medium | Sonnet high | Sonnet medium | Opus high |
 | `team-premium` | Opus high | Haiku low | Sonnet medium | Sonnet high | Sonnet high | Opus high |
 | `enterprise-balanced` | Sonnet high | Haiku low | Sonnet medium | Sonnet high | Sonnet medium | Opus high |
-| `api-quality` | Opus xhigh | Sonnet medium | Sonnet high | Sonnet high | Sonnet high | Opus xhigh |
+| `api-quality` | Opus xhigh | Haiku low | Sonnet high | Sonnet high | Sonnet high | Opus xhigh |
 
 Profile names are engineering presets, **not** promises that a subscription grants a particular model. If Opus is unavailable, choose another profile or an explicit confirmed fallback rather than silently changing the installed topology.
 

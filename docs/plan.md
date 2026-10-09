@@ -4,10 +4,11 @@ Single planning entry point and task register (rules: `AGENTS.md`). One fact, on
 
 ## Current record
 
-- Status 2026-10-09: audit fixes F-2026-10-09 (A-03, A-07, A-08, A-11, A-12, A-13) delivered via issue #3 → PR #4 → `main` (branch `fix/audit-2026-10-09` from `1e7a878`). Earlier: audit and cleanup merged in PR #2 (`1e7a878`).
+- Status 2026-10-09: runtime testing R-01..R-03 and doc-drift fix D-07 on branch `feat/runtime-smoke` from `fd99a3c`. Earlier: audit fixes F-2026-10-09 in PR #4, policy v15 in PR #8.
+- Runtime (Claude Code 2.1.295): `runtime_smoke.py --skill --tool-surface` 8/8 PASS ($0.12); installed `max-20x-thorough` 6/6 PASS; marketplace install in an isolated config dir PASS.
 - Local gates: unittest 10/10 PASS, doctor PASS, `sh -n setup.sh` PASS, POSIX launcher smoke PASS, `claude plugin validate --strict ./plugin` PASS (Claude Code 2.1.295, Python 3.14.7). Not run locally: actionlint/PyYAML (not installed), Python 3.11, PowerShell. Hosted PR #4: first run 37893026879 failed on macOS/Windows — a test defect (fault injection compared unresolved temp paths; reproduced locally with a symlinked `TMPDIR`), fixed in `c40b3a0`; run 37893144727 8/8 PASS, including both launcher smokes.
 - Blockers: none. Open audit IDs: none.
-- Next: no queued tasks from this audit; new work comes from a new audit or owner request.
+- Next: no queued tasks; release 1.3.0 needs an owner decision (tag/version are outside agent authority).
 
 ## Tasks
 
@@ -23,6 +24,10 @@ Status values: READY, BLOCKED, CONFIGURED_LOCAL (done locally, external acceptan
 | A-11 | P3 | DONE | Platform coverage: run `setup.ps1` on the hosted Windows job; test Python 3.11 or raise the stated minimum in `docs/installation.md`. The hosted Windows job currently runs only unittest/doctor. Unverified hypothesis: the `$Profile` parameter shadows PowerShell's automatic `$PROFILE` harmlessly. | P-01, A-01 | Hosted Windows job runs the PowerShell launcher against a temp dir; the minimum Python version in the docs is tested. Configured: Ubuntu/3.11 matrix entry, Windows/3.13 `setup.ps1` install/uninstall smoke, Ubuntu `setup.sh` smoke (passed locally). Done: run 37893144727 — Ubuntu/3.11 PASS, Windows/3.13 `setup.ps1 -Profile` install/uninstall PASS (so the `$Profile` shadowing is harmless), `setup.sh` smoke PASS. |
 | A-12 | P3 | DONE | Skill text: `plugin/skills/orchestrate/SKILL.md` says "repository `CLAUDE.md` rules"; Claude Code ≥ 2.1.277 also loads `AGENTS.md`. Change it to "project instructions (CLAUDE.md / AGENTS.md)". | — | Strict plugin validation passes; the text names both files. Done. |
 | A-13 | P3 | DONE | Evidence for "Current upstream caveats" in `docs/verification.md`: add issue links and client versions, or remove claims that cannot be found. | — | Every caveat has a link and version, or is removed. Done: #82259, #83252, #69267, #81618 linked with versions/state; the `--agent` caveat corrected (closed as inactive, not fixed). |
+| R-01 | P2 | DONE | Automated runtime acceptance: `scripts/runtime_smoke.py` runs headless Claude Code with the plugin and checks each role's and the skill's effective model/effort against the tested plugin dir's frontmatter, using hook (`effort.level`) and transcript (`message.model`) evidence. Replaces the manual checklist in `docs/verification.md`. | — | All roles and the skill PASS on the bundled plugin and on an installed non-default profile; parsing covered by a unit test. Done: 2.1.295, bundled 6/6, `max-20x-thorough` 6/6 (incl. `xhigh`). |
+| R-02 | P3 | DONE | Read-only tool surface: `--tool-surface` asks explorer/researcher to create a file. | R-01 | No write tool event and no file; positive control with `worker` detects the write. Done: 2/2 PASS, control FAIL as expected. Reviewer's no-write rule stays instruction-only (it has Bash). |
+| R-03 | P3 | DONE | Marketplace path from the README. | — | `marketplace add` + `install` in an isolated `CLAUDE_CONFIG_DIR` install and enable the plugin. Done: 1.2.0 from `main`, enabled; global config untouched. |
+| D-07 | P2 | DONE | Doc drift: `docs/models-and-plans.md` listed explorer as Sonnet medium for `max-20x-thorough` and `api-quality` (Haiku low since 1.2.0), found by R-01. `doctor.py` now derives both topology tables' expected rows from profiles/frontmatter. | — | Doctor fails on any table drift (negative test); tables fixed. |
 
 ## History (was → now → reason)
 

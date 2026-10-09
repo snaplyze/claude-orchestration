@@ -3,7 +3,7 @@ from pathlib import Path
 from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-import doctor, install
+import doctor, install, runtime_smoke
 from install import frontmatter
 
 class DistributionTests(unittest.TestCase):
@@ -13,14 +13,35 @@ class DistributionTests(unittest.TestCase):
         return json.loads((t/".claude/settings.json").read_text())
     def test_doctor_accepts_distribution(self):
         self.assertEqual(doctor.check(),[])
-    def test_doctor_rejects_invalid_profile_and_frontmatter_drift(self):
+    def test_doctor_rejects_invalid_profile_frontmatter_and_doc_drift(self):
         with tempfile.TemporaryDirectory() as td:
-            t=Path(td); shutil.copytree(ROOT/"plugin",t/"plugin"); shutil.copytree(ROOT/"profiles",t/"profiles")
+            t=Path(td)
+            for d in ("plugin","profiles","docs"): shutil.copytree(ROOT/d,t/d)
+            doc=t/"docs/models-and-plans.md"; doc.write_text(doc.read_text().replace("| `team-premium` | Opus high | Haiku low |","| `team-premium` | Opus high | Sonnet low |"))
             p=t/"profiles/pro-economy.json"; d=json.loads(p.read_text()); d["agents"]["tester"]=["gpt","max"]; p.write_text(json.dumps(d))
             install.patch_frontmatter(t/"plugin/agents/worker.md",{"effort":"low"})
             errors=doctor.check(t)
             self.assertTrue(any("pro-economy.json tester" in e for e in errors),errors)
             self.assertTrue(any("must match pro-balanced.json" in e for e in errors),errors)
+            self.assertTrue(any("row team-premium" in e for e in errors),errors)
+            self.assertTrue(any("docs/architecture.md: row worker" in e for e in errors),errors)
+    def test_runtime_smoke_judges_hook_and_transcript_evidence(self):
+        with tempfile.TemporaryDirectory() as td:
+            t=Path(td)
+            def transcript(name,*models):
+                f=t/name; f.write_text("\n".join(json.dumps({"message":{"model":m}}) for m in models)+"\n"); return str(f)
+            events=[{"hook_event_name":"SubagentStop","agent_type":"orchestration:explorer","effort":{"level":"low"},"agent_transcript_path":transcript("e","claude-haiku-5-5")},
+                    {"hook_event_name":"SubagentStop","agent_type":"orchestration:reviewer","effort":{"level":"medium"},"agent_transcript_path":transcript("r","claude-opus-5-5")},
+                    {"hook_event_name":"Stop","effort":{"level":"high"},"transcript_path":transcript("m","claude-haiku-5-5","<synthetic>","claude-opus-5-5")}]
+            got={r["name"]:r["ok"] for r in runtime_smoke.check_roles(events,ROOT/"plugin",("explorer","reviewer","worker"))}
+            self.assertEqual(got,{"explorer":True,"reviewer":False,"worker":False})
+            self.assertTrue(runtime_smoke.check_skill(events,ROOT/"plugin")["ok"])
+            events[-1]["transcript_path"]=transcript("m2","claude-opus-5-5","claude-haiku-5-5")
+            self.assertFalse(runtime_smoke.check_skill(events,ROOT/"plugin")["ok"])
+            probes=[{"hook_event_name":"SubagentStop","agent_type":f"orchestration:{r}"} for r in ("explorer","researcher")]
+            probes.append({"hook_event_name":"PreToolUse","agent_type":"orchestration:researcher","tool_name":"Bash"})
+            self.assertEqual([r["ok"] for r in runtime_smoke.check_read_only(probes,t)],[True,False])
+            (t/"probe-explorer.txt").write_text("OK"); self.assertFalse(runtime_smoke.check_read_only(probes,t,("explorer",))[0]["ok"])
     def test_every_profile_materializes_declared_frontmatter(self):
         for profile_path in sorted((ROOT/"profiles").glob("*.json")):
             name=profile_path.stem; declared=json.loads(profile_path.read_text())
