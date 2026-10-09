@@ -23,8 +23,9 @@ are cancelled; test jobs have a 15-minute timeout and the shell job 5 minutes.
 The token has `contents: read`, checkout does not persist credentials, and all
 external contributors require approval before their fork PR workflows run.
 
-The CI rules for agents are in `AGENTS.md` (§14–15); CI status is tracked as
-A-01 in the [plan](plan.md).
+For agents, the project runner mode is `github-hosted` (the `CI-раннеры` line
+in `AGENTS.md`; rules in §14–15). CI status is tracked as A-01 in the
+[plan](plan.md).
 Local Linux tests do not establish Windows/macOS acceptance or Claude Code
 runtime behavior.
 
