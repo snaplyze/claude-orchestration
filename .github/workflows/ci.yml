@@ -18,6 +18,9 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         python: ['3.12','3.13']
+        include:
+          - os: ubuntu-latest
+            python: '3.11'
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -28,6 +31,17 @@ jobs:
           python-version: ${{ matrix.python }}
       - run: python -m unittest discover -v
       - run: python scripts/doctor.py
+      - name: PowerShell launcher smoke
+        if: runner.os == 'Windows' && matrix.python == '3.13'
+        shell: pwsh
+        run: |
+          $t = (New-Item -ItemType Directory -Path (Join-Path $env:RUNNER_TEMP 'ps-smoke')).FullName
+          ./setup.ps1 $t -Profile pro-balanced
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          if (-not (Test-Path (Join-Path $t '.claude/plugins/orchestration/.claude-plugin/plugin.json'))) { throw 'plugin not installed' }
+          ./setup.ps1 $t -Uninstall
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          if (Test-Path (Join-Path $t '.claude/plugins/orchestration')) { throw 'plugin not removed' }
   shell:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -36,3 +50,10 @@ jobs:
         with:
           persist-credentials: false
       - run: sh -n setup.sh
+      - name: POSIX launcher smoke
+        run: |
+          t=$(mktemp -d)
+          ./setup.sh "$t" --profile pro-balanced
+          test -f "$t/.claude/plugins/orchestration/.claude-plugin/plugin.json"
+          ./setup.sh "$t" --uninstall
+          test ! -e "$t/.claude/plugins/orchestration"
