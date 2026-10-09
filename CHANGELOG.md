@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Use GitHub-hosted Linux, macOS, and Windows CI with Python 3.12/3.13 by owner decision; retain pinned actions and read-only checkout credentials.
+- Limit push CI to `main`, retain PR/manual runs, and bound job duration and superseded runs.
+
 ## 1.2.0 — 2026-10-08
 
 - Refresh model facts for Claude Haiku 5.5 (released 2026-10-07): adaptive thinking and explicit effort now supported.

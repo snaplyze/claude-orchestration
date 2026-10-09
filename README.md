@@ -11,7 +11,7 @@ Reusable Claude Code orchestration with a native plugin, five bounded specialist
 - Economy / Normal / Thorough routing
 - eight complete topology profiles for Pro, Max, Team, Enterprise, and API workflows
 - Python installer with POSIX/PowerShell launchers that rolls back on ordinary failures
-- distribution tests; the bundled CI workflow still targets GitHub-hosted runners and must move to self-hosted runners before use (see [plan](docs/plan.md), A-01)
+- distribution tests and GitHub-hosted CI on Linux, macOS, and Windows with Python 3.12/3.13 (see [verification](docs/verification.md)); no local runner is required
 
 ## Quick start
 

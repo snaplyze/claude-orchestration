@@ -10,6 +10,26 @@ sh -n setup.sh
 
 The tests verify namespace safety, the complete five-agent topology, supported fixed-effort model choices, all eight profile schemas, profile materialization, settings preservation, profile switching, uninstall, rollback after an early failure (invalid profile, before any write), and symlink rejection. Rollback after a late failure during the plugin swap is not exercised yet (see [plan](plan.md), A-09).
 
+## GitHub Actions
+
+The owner selected GitHub-hosted runners for this repository on 2026-10-09.
+CI runs the same unittest and doctor commands on `ubuntu-latest`, `macos-latest`,
+and `windows-latest`, with Python 3.12 and 3.13. A separate Ubuntu job checks
+`setup.sh` syntax. Python is provided by SHA-pinned `actions/setup-python`;
+no local VM, private tool cache, or runner registration token is required.
+
+Triggers are pushes to `main`, pull requests, and manual dispatch. PR branch
+pushes do not also create a separate push run. Superseded runs for the same ref
+are cancelled; test jobs have a 15-minute timeout and the shell job 5 minutes.
+The token has `contents: read`, checkout does not persist credentials, and all
+external contributors require approval before their fork PR workflows run.
+
+This is an explicit project exception to the general self-hosted policy in
+`AGENTS.md`. The remote is still empty at this change: actual hosted execution
+remains NOT_TESTED until the first authorized publication (B-01 in the
+[plan](plan.md)). Local Linux tests do not establish Windows/macOS acceptance,
+PowerShell launcher coverage (A-11), or Claude Code runtime behavior.
+
 ## Claude Code runtime acceptance
 
 When Claude Code is installed, run:
