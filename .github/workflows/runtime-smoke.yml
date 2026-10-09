@@ -1,0 +1,49 @@
+name: Runtime smoke
+# Real Claude Code runs against the plugin (scripts/runtime_smoke.py), authenticated with the owner's
+# subscription token (CLAUDE_CODE_OAUTH_TOKEN from `claude setup-token`). Without the secret the job is skipped.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - plugin/**
+      - profiles/**
+      - scripts/install.py
+      - scripts/runtime_smoke.py
+      - .github/workflows/runtime-smoke.yml
+permissions:
+  contents: read
+concurrency:
+  group: runtime-smoke-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  smoke:
+    # Fork PRs never receive secrets; only same-repository PRs and manual runs use the subscription.
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+    steps:
+      - name: Skip without subscription token
+        if: env.CLAUDE_CODE_OAUTH_TOKEN == ''
+        run: echo "::notice::CLAUDE_CODE_OAUTH_TOKEN is not set; runtime smoke skipped."
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        if: env.CLAUDE_CODE_OAUTH_TOKEN != ''
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        if: env.CLAUDE_CODE_OAUTH_TOKEN != ''
+        with:
+          python-version: '3.13'
+      - name: Install Claude Code (pinned)
+        if: env.CLAUDE_CODE_OAUTH_TOKEN != ''
+        run: npm install --global @anthropic-ai/claude-code@2.1.295
+      - name: Bundled plugin
+        if: env.CLAUDE_CODE_OAUTH_TOKEN != ''
+        run: python scripts/runtime_smoke.py --skill --tool-surface --agent-path --budget 1
+      - name: Installed max-20x-thorough profile
+        if: env.CLAUDE_CODE_OAUTH_TOKEN != ''
+        run: |
+          t=$(mktemp -d)
+          python scripts/install.py "$t" --profile max-20x-thorough
+          python scripts/runtime_smoke.py --skill --plugin-dir "$t/.claude/plugins/orchestration" --budget 1

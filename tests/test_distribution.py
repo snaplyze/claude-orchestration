@@ -42,6 +42,9 @@ class DistributionTests(unittest.TestCase):
             probes.append({"hook_event_name":"PreToolUse","agent_type":"orchestration:researcher","tool_name":"Bash"})
             self.assertEqual([r["ok"] for r in runtime_smoke.check_read_only(probes,t)],[True,False])
             (t/"probe-explorer.txt").write_text("OK"); self.assertFalse(runtime_smoke.check_read_only(probes,t,("explorer",))[0]["ok"])
+            session=[{"hook_event_name":"Stop","effort":{"level":"medium"},"transcript_path":transcript("a","claude-opus-5-5")}]
+            self.assertTrue(runtime_smoke.check_agent_session(session,{"model":"opus","effort":"high"},"reviewer")["ok"])
+            self.assertFalse(runtime_smoke.check_agent_session(session,{"model":"haiku","effort":"low"},"explorer")["ok"])
     def test_every_profile_materializes_declared_frontmatter(self):
         for profile_path in sorted((ROOT/"profiles").glob("*.json")):
             name=profile_path.stem; declared=json.loads(profile_path.read_text())
