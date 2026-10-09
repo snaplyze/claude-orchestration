@@ -95,6 +95,7 @@ On 2026-10-09, Claude Code 2.1.295 (local, subscription):
 | `--agent` session | Model applied for all roles; effort stays at the session level (medium) instead of frontmatter |
 | Default permission mode (as in CI) | PASS for a role and the skill |
 | Marketplace install in an isolated `CLAUDE_CONFIG_DIR` | PASS: 1.2.0 from `main` installed and enabled |
+| `runtime-smoke.yml` on GitHub-hosted Ubuntu with the owner's subscription token | PASS 20/20 (run 37912677050): bundled plugin incl. `--agent` and read-only probes, and installed `max-20x-thorough` |
 
 The reviewer result shows behavior, not a guarantee: subagent frontmatter can
 list only whole tools, and `Bash(...)` in `disallowedTools` removes Bash
