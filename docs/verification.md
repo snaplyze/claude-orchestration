@@ -8,7 +8,7 @@ python scripts/doctor.py
 sh -n setup.sh
 ```
 
-The tests verify namespace safety, the complete five-agent topology, supported fixed-effort model choices, all eight profile schemas, profile materialization, settings preservation, profile switching, uninstall, rollback, and symlink rejection.
+The tests verify namespace safety, the complete five-agent topology, supported fixed-effort model choices, all eight profile schemas, profile materialization, settings preservation, profile switching, uninstall, rollback after an early failure (invalid profile, before any write), and symlink rejection. Rollback after a late failure during the plugin swap is not exercised yet (see [plan](plan.md), A-09).
 
 ## Claude Code runtime acceptance
 

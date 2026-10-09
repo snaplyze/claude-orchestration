@@ -10,8 +10,8 @@ Reusable Claude Code orchestration with a native plugin, five bounded specialist
 - explicit model + effort for the orchestrator and every bundled subagent
 - Economy / Normal / Thorough routing
 - eight complete topology profiles for Pro, Max, Team, Enterprise, and API workflows
-- transactional Python installer with POSIX/PowerShell launchers
-- CI and distribution tests
+- Python installer with POSIX/PowerShell launchers that rolls back on ordinary failures
+- distribution tests; the bundled CI workflow still targets GitHub-hosted runners and must move to self-hosted runners before use (see [plan](docs/plan.md), A-01)
 
 ## Quick start
 
@@ -77,6 +77,7 @@ Static tests do not prove live model entitlement, subscription allowance, or suc
 - [Security](docs/security.md)
 - [Verification](docs/verification.md)
 - [Research sources](docs/research-sources.md)
+- [Plan and audit register](docs/plan.md)
 
 ## License
 

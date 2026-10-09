@@ -1,6 +1,6 @@
 # Research sources
 
-Primary references rechecked **2026-10-06**. The complete official documentation index is `https://code.claude.com/docs/llms.txt`.
+Primary references rechecked **2026-10-06**; conclusions 1–6, 9, and 10 rechecked **2026-10-09** (see [plan](plan.md)). The complete official documentation index is `https://code.claude.com/docs/llms.txt`.
 
 Core Claude Code references:
 
@@ -34,9 +34,11 @@ Important conclusions:
 
 1. Plugin namespace `orchestration` is deliberate: current validator rules reserve names that impersonate Anthropic, including `claude-` and `anthropic-` prefixes. Repository names are independent.
 2. Explorer uses Haiku 5.5 with explicit `low` effort; other fixed-effort roles use Sonnet/Opus.
-3. `max` is session-only in normal settings; persistent profiles stop at `xhigh`.
+3. `max` is session-only unless set through `CLAUDE_CODE_EFFORT_LEVEL`; settings keys reject it, so persistent profiles stop at `xhigh`.
 4. Plugin subagents ignore `hooks`, `mcpServers`, and `permissionMode` frontmatter for security.
 5. Agent Teams are experimental and disabled by default; they cost more context/usage than ordinary subagents.
 6. `CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY` controls the runtime ceiling for parallel read-only tools/subagents; this distribution does not override it.
 7. Exact model availability and organization effort caps are runtime/account facts, not properties of a profile name.
 8. Current upstream issues show that effort frontmatter is path-sensitive in some Claude Code versions. See `verification.md`; static declarations are not presented as proof of runtime application.
+9. Claude Code v2.1.277+ reads `AGENTS.md` as project instructions when no `CLAUDE.md`/`CLAUDE.local.md` exists (`https://code.claude.com/docs/en/memory#agents-md`); subagents load these instructions except Explore and Plan or a definition with `omitClaudeMd`.
+10. A top-level `effortLevel` in project settings applies to every model; in user settings it is ignored for Opus 5.5 and later (`https://code.claude.com/docs/en/settings-reference#effortlevel`).
