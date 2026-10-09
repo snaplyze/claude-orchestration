@@ -115,6 +115,17 @@ def write_settings(work: Path) -> Path:
     return settings
 
 
+def settle(transcript: Path, timeout: float = 15) -> None:
+    """Wait until the TUI has flushed an assistant message to the transcript and the file stops growing."""
+    deadline, size = time.monotonic() + timeout, -1
+    while time.monotonic() < deadline:
+        current = transcript.stat().st_size if transcript.exists() else -1
+        if current == size and transcript_models(str(transcript)):
+            return
+        size = current
+        time.sleep(1)
+
+
 def run_interactive(claude: str, steps: list[tuple[str, object]], plugin_dir: Path | None, work: Path, model: str, timeout: float = 600) -> list[list[dict]]:
     """Drive a real interactive session in tmux; each step sends a prompt and waits until done(events) is true.
 
@@ -143,11 +154,18 @@ def run_interactive(claude: str, steps: list[tuple[str, object]], plugin_dir: Pa
             events = load_events(log)
             for e in events:
                 if e.get("hook_event_name") == "Stop" and "agent_id" not in e:
+                    settle(Path(e["transcript_path"]))
                     snapshot = work / f"transcript-{i}.jsonl"
                     shutil.copyfile(e["transcript_path"], snapshot)
                     e["transcript_path"] = str(snapshot)
             snapshots.append(events)
     finally:
+        # Exit cleanly so Claude Code finishes writing its transcript before forget_sessions removes it.
+        subprocess.run(["tmux", "send-keys", "-t", session, "-l", "/exit"], capture_output=True)
+        subprocess.run(["tmux", "send-keys", "-t", session, "Enter"], capture_output=True)
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline and subprocess.run(["tmux", "has-session", "-t", session], capture_output=True).returncode == 0:
+            time.sleep(1)
         subprocess.run(["tmux", "kill-session", "-t", session], capture_output=True)
     return snapshots
 

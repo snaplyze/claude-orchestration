@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `runtime_smoke.py --interactive`: exit the TUI session cleanly before deleting its transcript (no leftover stub), and wait for the transcript to be flushed before reading the skill turn (fixes an intermittent false FAIL).
+
 ## 1.4.0 — 2026-10-09
 
 - Installer `--user`: build a local marketplace (`orchestration-local`) whose plugin carries the selected profile, for a user-scope install in all projects; `--default-rule` manages a default-orchestration block in the user `CLAUDE.md`.
