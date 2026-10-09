@@ -4,8 +4,8 @@ Single planning entry point and task register (rules: `AGENTS.md`). One fact, on
 
 ## Current record
 
-- Status 2026-10-09: readiness audit and release 1.4.0 (PR from `feat/polish-1.4`): user-scope install, B-02 fix, transcript cleanup in `runtime_smoke.py`, PowerShell user mode, repository presentation (README, SECURITY, Dependabot, issue/PR templates, CONTRIBUTING). Installed for the owner with `max-20x-thorough` and the default-orchestration rule.
-- Checks: unit tests, doctor, strict plugin and marketplace validation, launcher smokes; runtime smoke on the installed copy 20/20 PASS; hosted CI and runtime smoke on the release PR.
+- Status 2026-10-09: project ready. Releases 1.4.0 (`v1.4.0`, PR #22) and 1.4.1 (interactive-smoke fix, PR #24, and standing release authorization). Owner's machine: `orchestration@orchestration-local` user scope, `max-20x-thorough`, default-orchestration rule; installed copy 20/20 PASS. Test leftovers removed (session transcripts, scratch files, caches); only `main` exists locally and on GitHub.
+- GitHub: private vulnerability reporting, secret scanning with push protection, Dependabot alerts and security updates enabled; topics and description set; Projects off.
 - Blockers: none. Next: none queued — new work comes from an owner request or a new audit.
 
 ## Tasks

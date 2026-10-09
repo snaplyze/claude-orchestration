@@ -23,3 +23,4 @@ Open an issue first for anything beyond a small fix, then a PR against `main` us
 1. Bump `version` in `plugin/.claude-plugin/plugin.json` and rename `Unreleased` in `CHANGELOG.md` to the version and date.
 2. Merge the release PR after CI and the runtime smoke pass.
 3. Tag the merge commit `vX.Y.Z` and publish a GitHub Release with the changelog section.
+4. Update a user-scope install with `python scripts/install.py --user --profile <profile> --default-rule` and check it with `runtime_smoke.py --use-installed`.

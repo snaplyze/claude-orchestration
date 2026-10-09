@@ -2,7 +2,10 @@
 
 ## Unreleased
 
+## 1.4.1 — 2026-10-09
+
 - `runtime_smoke.py --interactive`: exit the TUI session cleanly before deleting its transcript (no leftover stub), and wait for the transcript to be flushed before reading the skill turn (fixes an intermittent false FAIL).
+- Agent rules: releases are pre-authorized by the owner; the release guide adds updating and re-checking a user-scope install.
 
 ## 1.4.0 — 2026-10-09
 
