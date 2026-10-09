@@ -4,11 +4,10 @@ Single planning entry point and task register (rules: `AGENTS.md`). One fact, on
 
 ## Current record
 
-- Status 2026-10-09: runtime testing R-01..R-03 and doc-drift fix D-07 on branch `feat/runtime-smoke` from `fd99a3c`. Earlier: audit fixes F-2026-10-09 in PR #4, policy v15 in PR #8.
-- Runtime (Claude Code 2.1.295): `runtime_smoke.py --skill --tool-surface` 8/8 PASS ($0.12); installed `max-20x-thorough` 6/6 PASS; marketplace install in an isolated config dir PASS.
-- Local gates: unittest 10/10 PASS, doctor PASS, `sh -n setup.sh` PASS, POSIX launcher smoke PASS, `claude plugin validate --strict ./plugin` PASS (Claude Code 2.1.295, Python 3.14.7). Not run locally: actionlint/PyYAML (not installed), Python 3.11, PowerShell. Hosted PR #4: first run 37893026879 failed on macOS/Windows — a test defect (fault injection compared unresolved temp paths; reproduced locally with a symlinked `TMPDIR`), fixed in `c40b3a0`; run 37893144727 8/8 PASS, including both launcher smokes.
+- Status 2026-10-09: runtime remainder R-04..R-07 on branch `feat/runtime-remainder` from `f436857`. Earlier: R-01..R-03 and D-07 in PR #10, policy v15 in PR #8.
+- Runtime (Claude Code 2.1.295, subscription): headless and interactive roles/skill PASS; `--agent` applies model, not effort; reviewer no-write instruction PASS; default permission mode PASS.
 - Blockers: none. Open audit IDs: none.
-- Next: no queued tasks; release 1.3.0 needs an owner decision (tag/version are outside agent authority).
+- Next: owner creates the `CLAUDE_CODE_OAUTH_TOKEN` secret (R-07), then a manual `runtime-smoke` run; release 1.3.0 needs an owner decision.
 
 ## Tasks
 
@@ -28,6 +27,10 @@ Status values: READY, BLOCKED, CONFIGURED_LOCAL (done locally, external acceptan
 | R-02 | P3 | DONE | Read-only tool surface: `--tool-surface` asks explorer/researcher to create a file. | R-01 | No write tool event and no file; positive control with `worker` detects the write. Done: 2/2 PASS, control FAIL as expected. Reviewer's no-write rule stays instruction-only (it has Bash). |
 | R-03 | P3 | DONE | Marketplace path from the README. | — | `marketplace add` + `install` in an isolated `CLAUDE_CONFIG_DIR` install and enable the plugin. Done: 1.2.0 from `main`, enabled; global config untouched. |
 | D-07 | P2 | DONE | Doc drift: `docs/models-and-plans.md` listed explorer as Sonnet medium for `max-20x-thorough` and `api-quality` (Haiku low since 1.2.0), found by R-01. `doctor.py` now derives both topology tables' expected rows from profiles/frontmatter. | — | Doctor fails on any table drift (negative test); tables fixed. |
+| R-04 | P3 | DONE | Reviewer no-write: frontmatter cannot limit Bash per command (`tools` takes whole tools; `Bash(...)` in `disallowedTools` removes Bash), so `--tool-surface` probes the instruction. | R-02 | No write tool and no file when asked to write. Done: PASS; documented as behavior, not a guarantee, with the `permissions.deny` alternative. |
+| R-05 | P3 | DONE | `claude --agent orchestration:<role>`: `--agent-path` mode. | R-01 | Agent model applied. Done: model applied for all 5 roles; effort stays at session level (docs specify only model and tools for `--agent`; matches upstream #82259) — documented with the `--effort` workaround, not a plugin defect. |
+| R-06 | P3 | DONE | Interactive TUI path: `--interactive` drives a real session through tmux, snapshotting the transcript per step (background subagents span several turns). | R-01 | Roles and skill PASS interactively. Done: 6/6 PASS. |
+| R-07 | P3 | CONFIGURED_LOCAL | Runtime smoke in CI on the owner's subscription: `runtime-smoke.yml` (GitHub-hosted Ubuntu, Claude Code 2.1.295 pinned, `CLAUDE_CODE_OAUTH_TOKEN` secret, manual + same-repo PRs touching plugin/profiles/installer; skipped without the secret). | Owner creates the secret | A hosted run with the secret passes the headless modes for the bundled plugin and `max-20x-thorough`. Local emulation of CI's default permission mode PASS. |
 
 ## History (was → now → reason)
 
