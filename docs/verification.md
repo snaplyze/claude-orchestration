@@ -12,12 +12,10 @@ sh -n setup.sh
 
 ## GitHub Actions
 
-The owner selected GitHub-hosted runners for this repository on 2026-10-09.
-CI runs the same unittest and doctor commands on `ubuntu-latest`, `macos-latest`,
+CI uses only standard GitHub-hosted runners. It runs the same unittest and doctor commands on `ubuntu-latest`, `macos-latest`,
 and `windows-latest`, with Python 3.12 and 3.13, plus Python 3.11 on Ubuntu.
 The Windows/3.13 job also installs and uninstalls through `setup.ps1`, and a
-separate Ubuntu job checks `setup.sh` syntax and runs the same smoke test. Python is provided by SHA-pinned `actions/setup-python`;
-no local VM, private tool cache, or runner registration token is required.
+separate Ubuntu job checks `setup.sh` syntax and runs the same smoke test. Python is provided by SHA-pinned `actions/setup-python`.
 
 Triggers are pushes to `main`, pull requests, and manual dispatch. PR branch
 pushes do not also create a separate push run. Superseded runs for the same ref
@@ -25,8 +23,8 @@ are cancelled; test jobs have a 15-minute timeout and the shell job 5 minutes.
 The token has `contents: read`, checkout does not persist credentials, and all
 external contributors require approval before their fork PR workflows run.
 
-This is an explicit project exception to the general self-hosted policy in
-`AGENTS.md`; the hosted-run status is tracked as A-01 in the [plan](plan.md).
+The CI rules for agents are in `AGENTS.md` (§14–15); CI status is tracked as
+A-01 in the [plan](plan.md).
 Local Linux tests do not establish Windows/macOS acceptance or Claude Code
 runtime behavior.
 
