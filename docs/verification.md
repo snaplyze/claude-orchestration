@@ -75,8 +75,12 @@ claude setup-token                                   # browser sign-in; prints a
 gh secret set CLAUDE_CODE_OAUTH_TOKEN -R snaplyze/claude-orchestration   # paste the token when asked
 ```
 
-The token can only make model requests. Without the secret the job is skipped,
-and fork PRs never receive it. Interactive mode is not run in CI.
+The token can only make model requests. It is the owner's personal
+subscription, and Anthropic's Consumer Terms forbid sharing account access, so
+the job runs only when the repository owner both authored the event and
+started or re-ran the run; other collaborators' PRs skip it, and fork PRs never
+receive the secret. Without the secret the job is skipped. Interactive mode is
+not run in CI. A shared team CI needs a Claude Console API key instead.
 
 ### Results
 
