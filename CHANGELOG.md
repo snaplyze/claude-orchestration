@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Installer: record and restore prior values of managed settings keys; keep the installed profile when rerun without `--profile`; leave unmanaged `settings.json` untouched on uninstall.
+- Installer: reject symlinks anywhere in the plugin destination and unknown profile names; swap the plugin in by rename beside the destination; restore exact settings bytes on failure.
+- `doctor.py` is the single static validator (adds profile value checks and marketplace-topology equality); tests cover late-failure rollback and no longer duplicate static checks.
+- CI adds Python 3.11 on Linux and `setup.sh`/`setup.ps1` smoke tests.
+- Orchestrate skill names `AGENTS.md` alongside `CLAUDE.md` as project instructions.
+
 - Use GitHub-hosted Linux, macOS, and Windows CI with Python 3.12/3.13 by owner decision; retain pinned actions and read-only checkout credentials.
 - Limit push CI to `main`, retain PR/manual runs, and bound job duration and superseded runs.
 
