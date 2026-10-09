@@ -57,7 +57,7 @@ class DistributionTests(unittest.TestCase):
             self.assertEqual(self.run_install(t,"--uninstall").returncode,0); self.assertEqual((t/".claude/settings.json").read_bytes(),raw)
     def test_failed_install_restores_plugin_and_settings(self):
         with tempfile.TemporaryDirectory() as td:
-            t=Path(td); self.assertEqual(self.run_install(t,"--profile","pro-balanced").returncode,0)
+            t=Path(td).resolve(); self.assertEqual(self.run_install(t,"--profile","pro-balanced").returncode,0)
             dest=t/".claude/plugins/orchestration"; settings=t/".claude/settings.json"
             settings.write_bytes(settings.read_bytes().replace(b"\n",b"\r\n")); before_settings=settings.read_bytes()
             before_plugin={p.relative_to(dest):p.read_bytes() for p in dest.rglob("*") if p.is_file()}
@@ -74,7 +74,7 @@ class DistributionTests(unittest.TestCase):
                 self.assertEqual([p.name for p in (t/".claude/plugins").iterdir()],["orchestration"])
     def test_failed_restore_keeps_previous_plugin(self):
         with tempfile.TemporaryDirectory() as td:
-            t=Path(td); self.assertEqual(self.run_install(t,"--profile","pro-balanced").returncode,0)
+            t=Path(td).resolve(); self.assertEqual(self.run_install(t,"--profile","pro-balanced").returncode,0)
             dest=t/".claude/plugins/orchestration"; manifest=(dest/".claude-plugin/plugin.json").read_bytes(); before=(t/".claude/settings.json").read_bytes()
             real_replace=os.replace
             def never_into_dest(src,dst):
