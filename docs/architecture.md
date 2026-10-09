@@ -6,7 +6,7 @@ The marketplace distribution uses the balanced topology:
 
 | Component | Model alias | Effort | Turn cap | Intent |
 |---|---|---:|---:|---|
-| orchestrator skill | opus | high | session-owned | decomposition, routing, integration |
+| orchestrator skill | opus | high | session-owned | decomposition, routing, integration, final judgment |
 | explorer | haiku | low | 12 | focused repository mapping |
 | researcher | sonnet | medium | 16 | primary-source research |
 | worker | sonnet | high | 30 | bounded implementation |

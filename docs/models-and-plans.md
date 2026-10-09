@@ -6,24 +6,13 @@ Verified against Anthropic primary documentation on **2026-10-08**.
 
 Current platform documentation lists Claude Fable 5.1, Opus 5.5, Sonnet 5.5, and Haiku 5.5. Claude Code family aliases such as `opus`, `sonnet`, and `haiku` resolve a supported release for the active account/client. Exact availability is account- and organization-dependent; `/model` is the runtime source of truth.
 
-Effort is a separate control from model capability. Anthropic's current model overview and Claude Code model-configuration surfaces are not perfectly synchronized about some model defaults (notably Sonnet 5.5). This distribution therefore does not rely on an implicit default: it declares the intended level explicitly. Current Claude Code accepts `low`, `medium`, `high`, `xhigh`, and session-only `max` where the active model supports them. Skill and subagent frontmatter can declare `effort`, which is the mechanism used by this distribution. `CLAUDE_CODE_EFFORT_LEVEL` has higher precedence; organization policy can cap the effective value.
+Effort is a separate control from model capability. Anthropic's current model overview and Claude Code model-configuration surfaces are not perfectly synchronized about some model defaults (notably Sonnet 5.5). This distribution therefore does not rely on an implicit default: it declares the intended level explicitly. Current Claude Code accepts `low`, `medium`, `high`, `xhigh`, and `max` where the active model supports them; `max` applies to the current session only unless set through `CLAUDE_CODE_EFFORT_LEVEL`, and the `effortLevel`/`modelSettings` settings keys reject it. In Claude Code, Opus 5.5, Sonnet 5.5, and Haiku 5.5 default to `medium` when nothing sets a level. Skill and subagent frontmatter can declare `effort`, which is the mechanism used by this distribution. `CLAUDE_CODE_EFFORT_LEVEL` has higher precedence; organization policy can cap the effective value. A top-level `effortLevel` in project settings (what the installer writes) applies to every model; the same key in user settings is ignored for Opus 5.5 and later, which use per-model levels under `modelSettings`.
 
-**Haiku 5.5 supports adaptive thinking and effort.** Released October 7, 2026, it replaces the earlier Haiku 4.5 limitation. Explorer now uses Haiku 5.5 with explicit `low` effort. Verify the resolved `haiku` alias with `/model` in the active Claude Code client.
+**Haiku 5.5 supports adaptive thinking and effort.** Released October 7, 2026, it replaces the earlier Haiku 4.5 limitation. Explorer now uses Haiku 5.5 with explicit `low` effort; Claude Code needs v2.1.293 or later for Haiku 5.5. Verify the resolved `haiku` alias with `/model` in the active Claude Code client.
 
 ## Default topology
 
-The marketplace plugin ships the balanced topology:
-
-| Component | Model alias | Effort | Purpose |
-|---|---|---:|---|
-| orchestrator skill | `opus` | `high` | decomposition, routing, integration, final judgment |
-| explorer | `haiku` | `low` | scoped repository mapping |
-| researcher | `sonnet` | `medium` | current primary-source research |
-| worker | `sonnet` | `high` | bounded implementation |
-| tester | `sonnet` | `medium` | deterministic verification |
-| reviewer | `opus` | `high` | independent material-risk review |
-
-The orchestrator does **not** dynamically rewrite these effort values. It adapts the number and type of delegates, sequencing, and escalation mechanism.
+The marketplace plugin ships the balanced topology listed in [architecture](architecture.md) (same values as `pro-balanced` below). The orchestrator does **not** dynamically rewrite these effort values. It adapts the number and type of delegates, sequencing, and escalation mechanism.
 
 ## Profiles
 
@@ -46,11 +35,11 @@ Profile names are engineering presets, **not** promises that a subscription gran
 
 Pro and Max can authenticate Claude Code with the consumer subscription. Max 5x/20x describe usage capacity relative to Pro; they are not concurrency limits. Team and Enterprise have organization-level policy and model controls. API-key, Bedrock, Vertex/Agent Platform, Foundry, and other provider authentication use their own billing/availability rules.
 
-If `ANTHROPIC_API_KEY` is set, Claude Code can use API billing instead of subscription allowance. Check `/status`, `/model`, and the account Usage view before drawing conclusions about remaining capacity.
+If `ANTHROPIC_API_KEY` is set, Claude Code uses it instead of the subscription: always in non-interactive `-p` runs, and in interactive sessions after a one-time approval prompt. Check `/status`, `/model`, and the account Usage view before drawing conclusions about remaining capacity.
 
 ## Why no `max` preset
 
-Anthropic documents `max` as session-only in normal settings and recommends matching effort to task complexity. Persistent distributions therefore stop at `xhigh`. A user can deliberately select `max` for a one-off run when supported and justified.
+Anthropic documents `max` as session-only unless set through `CLAUDE_CODE_EFFORT_LEVEL`, rejects it in settings keys, and recommends matching effort to task complexity. Persistent distributions therefore stop at `xhigh`. A user can deliberately select `max` for a one-off run when supported and justified.
 
 ## Model discovery updates (October 2026)
 
