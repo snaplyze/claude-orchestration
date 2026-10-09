@@ -7,7 +7,7 @@ disable-model-invocation: true
 ---
 # Orchestration
 
-The main session owns scope, architecture, delegation, integration, and final verification. User instructions and repository `CLAUDE.md` rules remain authoritative.
+The main session owns scope, architecture, delegation, integration, and final verification. User instructions and project instructions (`CLAUDE.md` / `AGENTS.md`) remain authoritative.
 
 ## Modes
 - **Economy**: keep small work in the main session; use at most one bounded delegate unless separation is clearly valuable.
