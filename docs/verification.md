@@ -31,24 +31,46 @@ runtime behavior.
 
 ## Claude Code runtime acceptance
 
-When Claude Code is installed, run:
+When Claude Code is installed and authenticated, run:
 
 ```bash
 claude plugin validate --strict ./plugin
-claude --plugin-dir ./plugin
+python scripts/runtime_smoke.py --skill --tool-surface        # bundled plugin
+python scripts/runtime_smoke.py --skill --plugin-dir <project>/.claude/plugins/orchestration
 ```
 
-Then verify:
+`runtime_smoke.py` starts headless Claude Code with the plugin and a temporary
+`--settings` file whose `SubagentStop`/`Stop` hooks record the effort level in
+effect. It dispatches each `orchestration:*` role by name with a one-word task
+and reads each subagent's model from its session transcript. With `--skill` it
+starts a session on another model (`haiku` by default) and invokes
+`/orchestration:orchestrate`, so a working model/effort override is visible.
+With `--tool-surface` it asks the read-only roles (explorer, researcher) to
+create a file and passes only if no write tool ran and the file is absent; the
+same probe against `worker` fails, which confirms it detects writes.
+Every check compares against the frontmatter of the tested plugin directory, so
+an installed profile is checked against its own values. Each run makes real,
+paid model calls (about $0.05–0.15; `--budget` caps each run) and is not part
+of CI, which has no Claude credentials.
 
-1. `/orchestration:orchestrate` is visible.
-2. The five `orchestration:*` agents are discoverable.
-3. A direct `/orchestration:orchestrate ...` invocation uses the expected coordinator model/effort for the selected project profile.
-4. Foreground Agent-tool dispatch of each specialist uses its declared model/effort.
-5. Read-only and write-capable role behavior matches the documented tool surface.
+Covered: the skill is invocable, the five roles are discoverable by name, both
+use their declared model and effort, and explorer/researcher cannot write.
+Not covered: reviewer's no-write rule (it keeps Bash, so the rule is an
+instruction, not a tool limit) and interactive or `--agent` paths.
+
+Results on 2026-10-09, Claude Code 2.1.295: bundled plugin — 5/5 roles and the
+skill PASS (explorer `claude-haiku-5-5`/low; researcher and tester
+`claude-sonnet-5-5`/medium; worker `claude-sonnet-5-5`/high; reviewer and skill
+`claude-opus-5-5`/high, the skill switching a Haiku session); installed
+`max-20x-thorough` — 6/6 PASS including `xhigh` for reviewer and skill; read-only
+probe 2/2 PASS. Marketplace path: in an isolated `CLAUDE_CONFIG_DIR`,
+`/plugin marketplace add snaplyze/claude-orchestration` and
+`/plugin install orchestration@snaplyze-orchestration` installed and enabled
+1.2.0 from `main`.
 
 ## Current upstream caveats
 
-Claude Code documentation supports `effort` in skill and subagent frontmatter, but upstream issue reports show path-specific inconsistencies (checked 2026-10-09; none was retested on Claude Code 2.1.295):
+Claude Code documentation supports `effort` in skill and subagent frontmatter, but upstream issue reports show path-specific inconsistencies (checked 2026-10-09). On Claude Code 2.1.295, `runtime_smoke.py` found the first and third behaviors working for this plugin's paths — Agent-tool dispatch and a headless `/orchestration:orchestrate` invocation both applied frontmatter model and effort; `--agent` was not tested:
 
 - ordinary Agent-tool subagent dispatch runs at the subagent's `effort`: reporters' observations in [#82259](https://github.com/anthropics/claude-code/issues/82259) and [#83252](https://github.com/anthropics/claude-code/issues/83252) (v2.1.220; the latter found only a display defect), not a maintainer confirmation;
 - `claude -p --agent <name>` ignored agent frontmatter effort in [#82259](https://github.com/anthropics/claude-code/issues/82259) (v2.1.220), closed 2026-10-08 as inactive rather than fixed;

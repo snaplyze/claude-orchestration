@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add `scripts/runtime_smoke.py`: a headless Claude Code run that checks each role's and the skill's effective model and effort against frontmatter (hook and transcript evidence); `--tool-surface` checks that read-only roles cannot write.
+- `doctor.py` checks that the topology tables in `docs/models-and-plans.md` and `docs/architecture.md` match the profiles and plugin frontmatter; fix the stale explorer entries for `max-20x-thorough` and `api-quality` (Haiku low since 1.2.0).
+
 - Installer: record and restore prior values of managed settings keys; keep the installed profile when rerun without `--profile`; leave unmanaged `settings.json` untouched on uninstall.
 - Installer: reject symlinks anywhere in the plugin destination and unknown profile names; swap the plugin in by rename beside the destination; restore exact settings bytes on failure.
 - `doctor.py` is the single static validator (adds profile value checks and marketplace-topology equality); tests cover late-failure rollback and no longer duplicate static checks.

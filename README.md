@@ -63,7 +63,7 @@ python -m unittest discover -v
 python scripts/doctor.py
 sh -n setup.sh
 claude plugin validate --strict ./plugin   # when Claude Code is installed
-claude --plugin-dir ./plugin               # interactive smoke test
+python scripts/runtime_smoke.py --skill --tool-surface   # paid runtime check of roles, skill, read-only tools
 ```
 
 Static tests do not prove live model entitlement, subscription allowance, or successful inference.
