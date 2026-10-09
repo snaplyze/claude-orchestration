@@ -6,7 +6,7 @@ Requirements: Python 3.11+ (stated minimum, untested: the CI matrix lists 3.12/3
 ./setup.sh /workspace/project --profile pro-balanced
 ```
 
-The plugin is copied to `.claude/plugins/orchestration`; selected profile keys are merged into `.claude/settings.json`. Unrelated settings are preserved and the installer records exactly which keys it owns under `claude-orchestration`. Known gaps (see [plan](plan.md)): a pre-existing `model`/`effortLevel` is overwritten and removed on uninstall (A-03); rerunning without `--profile` resets agent frontmatter to the balanced topology while settings keep the previous profile (A-04).
+The plugin is copied to `.claude/plugins/orchestration`; selected profile keys are merged into `.claude/settings.json`. Unrelated settings are preserved and the installer records exactly which keys it owns under `claude-orchestration`. Known gaps (see [plan](plan.md)): a pre-existing `model`/`effortLevel` is overwritten and removed on uninstall, and rerunning without `--profile` resets agent frontmatter to the balanced topology while settings keep the previous profile (A-03).
 
 Run it explicitly:
 

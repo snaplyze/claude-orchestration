@@ -54,7 +54,7 @@ The installer does **not** install Claude Code, authenticate an account, enable 
 
 Ordinary subagents are the default because they keep focused work in separate contexts and return summaries. Agent Teams are intentionally not enabled: Anthropic still marks them experimental and notes materially higher token use. Use teams explicitly only when separate sessions need direct communication.
 
-The marketplace copy uses the balanced topology: Opus/high orchestrator, Haiku/low explorer, Sonnet/medium researcher, Sonnet/high worker, Sonnet/medium tester, and Opus/high reviewer. Local profiles materialize their own complete model+effort topology. The orchestrator adapts routing, **not** reasoning levels. Account/workspace restrictions remain authoritative. See [model and plan strategy](docs/models-and-plans.md).
+The marketplace copy uses the balanced topology ([architecture](docs/architecture.md)); local profiles materialize their own complete model+effort topology. The orchestrator adapts routing, **not** reasoning levels. Account/workspace restrictions remain authoritative. See [model and plan strategy](docs/models-and-plans.md).
 
 ## Validate
 
@@ -77,12 +77,8 @@ Static tests do not prove live model entitlement, subscription allowance, or suc
 - [Security](docs/security.md)
 - [Verification](docs/verification.md)
 - [Research sources](docs/research-sources.md)
-- [Plan and audit register](docs/plan.md)
+- [Plan](docs/plan.md)
 
 ## License
 
 Apache-2.0.
-
-## October 8, 2026 model refresh
-
-Explorer uses the Claude Code `haiku` alias with `low` effort, targeting Haiku 5.5, which now supports adaptive thinking. Check `/model` and active account access before production use. Other role settings remain profile-specific. See [models and plans](docs/models-and-plans.md).

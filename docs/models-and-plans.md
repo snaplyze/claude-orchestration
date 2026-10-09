@@ -12,18 +12,7 @@ Effort is a separate control from model capability. Anthropic's current model ov
 
 ## Default topology
 
-The marketplace plugin ships the balanced topology:
-
-| Component | Model alias | Effort | Purpose |
-|---|---|---:|---|
-| orchestrator skill | `opus` | `high` | decomposition, routing, integration, final judgment |
-| explorer | `haiku` | `low` | scoped repository mapping |
-| researcher | `sonnet` | `medium` | current primary-source research |
-| worker | `sonnet` | `high` | bounded implementation |
-| tester | `sonnet` | `medium` | deterministic verification |
-| reviewer | `opus` | `high` | independent material-risk review |
-
-The orchestrator does **not** dynamically rewrite these effort values. It adapts the number and type of delegates, sequencing, and escalation mechanism.
+The marketplace plugin ships the balanced topology listed in [architecture](architecture.md) (same values as `pro-balanced` below). The orchestrator does **not** dynamically rewrite these effort values. It adapts the number and type of delegates, sequencing, and escalation mechanism.
 
 ## Profiles
 

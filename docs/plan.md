@@ -1,72 +1,40 @@
-# Plan and audit register
+# Plan
 
-Single planning record for this repository (see `AGENTS.md`). Findings, queue, and the current record live here; details stay in the docs they concern. Do not create parallel registers.
+Single planning entry point and task register (rules: `AGENTS.md`). One fact, one place: task status lives only here; product behavior is described in the other docs.
 
 ## Current record
 
-- **Audit A-2026-10-09**: local audit COMPLETE (documents only). Base: `main` = `8b45fa9`, audited at `agent-policy-v14` = `2624a34` (unpublished policy commit), Claude Code 2.1.295, Python 3.14.7, Linux.
-- Document changes from this audit: this file; corrections in `README.md`, `docs/verification.md`, `docs/models-and-plans.md`, `docs/research-sources.md`, `docs/security.md`, `docs/installation.md`; resource criterion and planning pointer in `AGENTS.md`. No code, tests, CI, or settings changed.
-- Local checks at audit time: `python -m unittest discover -v` PASS (8 tests), `python scripts/doctor.py` PASS, `sh -n setup.sh` PASS, `claude plugin validate --strict ./plugin` PASS.
-- CI decision, 2026-10-09: the owner explicitly chose GitHub-hosted Linux/macOS/Windows for this repository. A-01 is CONFIGURED_LOCAL; the attempted local-runner setup is cancelled. Actions/merge remain NOT_TESTED. Publication still requires B-01 (first base on the empty `origin`). Existing local audit commits are preserved.
-- Next step: owner decides B-01; publish the reviewed initial tree and verify its hosted CI, then continue the implementation queue below. CI selection no longer blocks publication.
-- Hosted-CI switch checks: 8 unittest tests PASS (0.595 s), doctor PASS, shell syntax PASS, strict plugin validation PASS, actionlint 1.7.12 PASS and independent review without material findings. Six changed files only; the unified policy block and existing audit history are preserved. Bounded credential-pattern scan: 49 history blobs plus the six changed files, no hits. The unregistered VM service account and its unused home were removed; the other four runners are unchanged.
+- Status 2026-10-09: audit A-2026-10-09 and documentation cleanup C-2026-10-09 done locally (documents only). Local commits on `audit-2026-10-09`, stacked on `agent-policy-v14`; base `main` = `8b45fa9`.
+- Local gates at the last check: unittest 8/8 PASS, doctor PASS, `sh -n setup.sh` PASS, `claude plugin validate --strict ./plugin` PASS. Hosted Actions and merge: NOT_TESTED.
+- Blocker: P-01 (empty `origin`, owner decides the first base). Return condition: owner decision recorded here.
+- Next: P-01; meanwhile A-03 is ready for implementation (independent of publication).
 
-## Scope and coverage (A-2026-10-09)
+## Tasks
 
-Purpose: distribute a Claude Code orchestration plugin (one skill, five subagents), eight model/effort profiles, and a stdlib-only installer that copies the plugin into a target project and merges two root keys into its `.claude/settings.json`. Users: Claude Code users installing via marketplace or `setup.sh`/`setup.ps1`. Flow: profile JSON → frontmatter patch in a staged copy → `.claude/plugins/orchestration` + settings merge with an ownership marker → `claude --plugin-dir`.
+Status values: READY, BLOCKED, CONFIGURED_LOCAL (done locally, external acceptance pending), DONE. Priority: P0 urgent, P1 high damage, P2 normal, P3 low risk. Every implementation task ends with the gates from `AGENTS.md` and an update of this table.
 
-| Area | Status | Basis |
-|---|---|---|
-| Requirements, commands, scenarios | checked | README, docs, CONTRIBUTING, tests read in full |
-| Installer correctness | checked | code read; A-03..A-06 reproduced on throwaway dirs |
-| Security | partial | installer paths/symlinks checked; no secrets or network code; CI uses GitHub-hosted jobs, read-only tokens and external-fork approval (A-01) |
-| Reliability / rollback | partial | early-failure rollback tested; late-failure path only read, not exercised (A-09) |
-| Architecture / simplicity | checked | A-07, A-08 |
-| Tests | checked | per-test timings below; gaps A-09, A-11 |
-| Build / packaging | checked | `claude plugin validate --strict ./plugin` PASS; marketplace manifest read, not installed from network |
-| Dependencies | checked | stdlib only; workflow actions pinned by SHA |
-| CI / delivery | checked | A-01, B-01 |
-| Performance | checked, not significant | see measurements; no heavy path exists |
-| Docs vs primary sources | checked | 14 claims verified against code.claude.com / platform.claude.com on 2026-10-09; fixes D-01..D-06 |
-| Runtime model/effort behavior | not tested | needs interactive paid sessions; static checks do not prove it (docs/verification.md) |
-| setup.ps1 | not tested | no PowerShell available locally (A-11) |
+| ID | Pri | Status | Result and scope | Deps | Acceptance |
+|---|---|---|---|---|---|
+| P-01 | blocker | BLOCKED | First publication: owner decides how `main` is created on the empty public `origin` (`git ls-remote` empty, no default branch); then the stacked branches go through issue → PR. Absorbs B-01. | Owner | `origin/main` exists from the accepted, secret-scanned history; existing local commits preserved; PR merged; SHA recorded here. |
+| A-01 | P1 | CONFIGURED_LOCAL | GitHub-hosted CI by owner decision (exception in `AGENTS.md`, details in `docs/verification.md`). Local checks done: actionlint 1.7.12, gates, credential-pattern scan of 49 history blobs. | P-01 | First hosted run on the published SHA: all 7 jobs green within their timeouts. |
+| A-03 | P2 | READY | One settings-ownership redesign in `scripts/install.py`. Root cause: the marker records only key names, not the prior state or effective profile. Steps: (1) the marker stores each managed key's prior value or absence plus the profile; (2) uninstall and profile switch restore from it; (3) install without `--profile` re-applies the marker's profile; (4) uninstall writes only when a marker was removed. Removes: blind `pop` of managed keys, the unconditional rewrite in `uninstall`. Absorbs A-04, A-05. | — | New tests: pre-existing `model`/`effortLevel` round-trip byte-for-byte through install→uninstall and through a profile switch; reinstall without `--profile` keeps the frontmatter and settings of one profile; no-marker uninstall leaves the file bytes unchanged. Existing settings tests still pass. |
+| A-07 | P3 | READY | Install-transaction rewrite in `scripts/install.py`. Root cause: a copy-based backup/restore around a cross-filesystem move. Steps: (1) reject a `dest` that resolves outside `target` and profile names that are not files in `profiles/`; (2) stage beside `dest`, swap with `os.replace` (old → aside, stage → `dest`, delete old; reverse on failure); (3) restore settings bytes verbatim. Removes: the backup `copytree` in the system temp dir, the `copytree` restore, the cross-FS move, UTF-8 re-encoding of restored settings. Absorbs A-06, A-09. | A-03 (same file, one writer) | Tests: parent-symlink and `../` profile rejected; fault injected at the swap leaves plugin dir and settings bytes identical; existing rollback/symlink tests pass. Resource: median of 3 installer runs ≤ 0.2 s (baseline ≈ 35 ms, Python 3.14.7) and no backup copy of the plugin tree. Not crash-consistent; the docs keep saying so. |
+| A-08 | P3 | READY | One static validator. Root cause: three frontmatter parsers (`install.py`, `doctor.py`, tests) and overlapping manifest/topology checks. Steps: `doctor.py` adds profile model/effort value checks and becomes the only static validator; tests run it once and keep the installer behavior tests; one shared parser. Removes: the duplicated static assertions in tests and the extra parser copies; drops `test_install_materializes_...` frontmatter assertions already covered per profile. | A-07 (same files) | Every property asserted today maps to exactly one remaining check (list it in the PR); suite ≤ 2 s (baseline 0.53 s). |
+| A-11 | P3 | BLOCKED | Platform coverage: run `setup.ps1` on the hosted Windows job; test Python 3.11 or raise the stated minimum in `docs/installation.md`. The hosted Windows job currently runs only unittest/doctor. Unverified hypothesis: the `$Profile` parameter shadows PowerShell's automatic `$PROFILE` harmlessly. | P-01, A-01 | Hosted Windows job runs the PowerShell launcher against a temp dir; the minimum Python version in the docs is tested. |
+| A-12 | P3 | READY | Skill text: `plugin/skills/orchestrate/SKILL.md` says "repository `CLAUDE.md` rules"; Claude Code ≥ 2.1.277 also loads `AGENTS.md`. Change it to "project instructions (CLAUDE.md / AGENTS.md)". | — | Strict plugin validation passes; the text names both files. |
+| A-13 | P3 | READY | Evidence for "Current upstream caveats" in `docs/verification.md`: add issue links and client versions, or remove claims that cannot be found. | — | Every caveat has a link and version, or is removed. |
 
-### Measurements (2026-10-09, local, Python 3.14.7, median of 3)
+## History (was → now → reason)
 
-Full suite 0.53 s. `test_every_profile_materializes_declared_frontmatter` 274 ms (8 installer subprocesses); other installer tests 34–69 ms; static tests ~0 ms. One installer run ≈ 35 ms, dominated by interpreter startup; plugin payload 28 KB. Conclusion: no product or test cost worth optimizing; A-07/A-08 are justified by simplicity and correctness, not speed. Agent-process cost: `AGENTS.md` (~8 KB) is loaded into every session; it is the owner's mandated policy, no action.
+- A-04, A-05 → A-03; A-06, A-09 → A-07; B-01 → P-01. Reason: same root cause or component, so one rewrite with its own deletions replaces a chain of guards.
+- A-01 self-hosted migration → GitHub-hosted (CONFIGURED_LOCAL). Reason: owner decision, 2026-10-09; the attempted local-runner setup was cancelled. That session also removed an unregistered VM service account and its unused home; the four other runners were left unchanged.
+- D-01..D-06 (corrections to effort `max` persistence, `effortLevel` scope, Haiku 5.5 minimum client, `ANTHROPIC_API_KEY` billing, rollback coverage, installer caveats) → DONE in `80ea0a6`. Still unverified: the Haiku 5.5 release date and the Models API field dates in `docs/models-and-plans.md`.
+- C-2026-10-09 cleanup: this file rewritten (11.3 → 8.2 KB); duplicated topology table and README model-refresh note removed in favor of `docs/architecture.md` and `docs/models-and-plans.md`; repository-specific process rules made explicit in `AGENTS.md` (+1.0 KB). All docs 53.4 → 50.4 KB; start context (`AGENTS.md` + this file) 28.7 → 26.6 KB. No whole file deleted: `CONTRIBUTING.md` (GitHub contributor entry) and `profiles/README.md` (directory guide) are small and have their own readers.
 
-## Findings register
+## Audit evidence (A-2026-10-09)
 
-Priority: P0 critical/urgent, P1 high damage, P2 normal fix, P3 low risk. "Docs fixed" means the description was corrected; it does not mean the product was changed or verified.
+Scope: plugin (one skill, five subagents), eight profiles, the stdlib-only installer (profile JSON → frontmatter patch in a staged copy → `.claude/plugins/orchestration` + settings merge with an ownership marker), launchers, docs, CI. Checked: requirements, installer correctness (A-03/A-07 defects reproduced on throwaway dirs), architecture, tests, packaging (strict validation), dependencies (stdlib only, actions pinned by SHA), CI/delivery, and 14 doc claims against code.claude.com / platform.claude.com. Partial: security and rollback (late-failure path untested, A-07). Not tested: Claude Code runtime model/effort behavior (needs paid interactive sessions) and `setup.ps1` (no PowerShell locally, A-11).
 
-| ID | Pri | Type | Evidence | Impact | Decision / acceptance | Deps / effort |
-|---|---|---|---|---|---|---|
-| A-01 | P1 | CI policy — CONFIGURED_LOCAL | Owner decision 2026-10-09 supersedes the self-hosted migration: Linux/macOS/Windows × Python 3.12/3.13 on standard GitHub-hosted runners, plus Ubuntu shell syntax. | Hosted CI is explicitly authorized for this repository; no local runner is needed. | Project exception in AGENTS.md; push only to main + PR/manual triggers; concurrency cancellation, 15/5-minute timeouts, SHA pins, contents:read, persist-credentials:false; fork approval all_external_contributors read back. Actual matrix execution remains NOT_TESTED until B-01. | B-01 for hosted acceptance. S |
-| B-01 | blocker | Delivery | `git ls-remote origin` empty; `gh repo view` → no default branch; public, viewer ADMIN. | No PR base exists; policy forbids direct push to create it without owner decision. | Owner decides how main is first published. Hosted CI is now authorized by the A-01 decision; check the accepted outgoing history and run that exact initial tree on GitHub. | Owner. XS |
-| A-03 | P2 | Correctness | `scripts/install.py` `apply_settings`/`uninstall`: target with `{"model":"sonnet","effortLevel":"low","x":1}` → install pro-balanced → uninstall → `{"x":1}`. | User's own `model`/`effortLevel` silently overwritten and then deleted. | Record prior values/absence of managed keys in the marker; restore them on uninstall and use them as the base on profile switch. Accept: new test with pre-existing keys round-trips to the original settings. | — . S |
-| A-04 | P2 | Correctness | install `--profile max-20x-thorough`, then install without `--profile` → SKILL `effort: high` (balanced) while settings keep `effortLevel: xhigh` and marker `max-20x-thorough`. | Mixed topology; marker misreports the profile. | Without `--profile`, re-materialize the marker's profile (or refuse and require `--profile`/`--uninstall`). Accept: test of reinstall-without-profile keeps one consistent profile. | A-03 (same marker). XS |
-| A-09 | P2 | Test gap | `test_invalid_profile_rolls_back_plugin_and_settings` fails in `profile_data` before any write; the restore branch after `rmtree(dest)`/`move` is never executed. | The installer's main safety claim is unverified. | Add in-process fault injection at the swap step; assert plugin dir and settings bytes restored. | After A-07. S |
-| A-05 | P3 | Correctness | `uninstall` on `{"a":  1}` with no marker rewrites it as indented JSON. | Unowned file reformatted. | Write only when a marker was removed. Accept: no-marker uninstall leaves bytes unchanged. | XS |
-| A-06 | P3 | Hardening | Only the final `dest` symlink is checked; a symlinked `.claude/plugins` made the install land in an external dir (reproduced). Profile names are not constrained (`../` reaches other JSON, rejected only by the schema check). | Writes outside the target in a user-controlled layout. | Require `dest.resolve()` under `target.resolve()`; accept only names of files in `profiles/`. Accept: tests for parent symlink and traversal name. | XS |
-| A-07 | P3 | Simplification | `install`: full `copytree` backup into system temp, stage in system temp (cross-FS `move` = copy), `copytree` restore; settings restored via `decode("utf-8")` + `\n` normalization. | Three copies and a non-byte-exact settings restore for a 28 KB payload. | Stage next to `dest`; swap with `os.replace` (`dest`→old, stage→`dest`, remove old; reverse on failure); restore settings bytes verbatim. Removes backup tree, restore copy, cross-FS move. Same guarantee for ordinary failures; still not crash-consistent. | Before A-09. S |
-| A-08 | P3 | Duplication | Three frontmatter parsers (`install.patch_frontmatter`, `doctor.fm`, `tests.frontmatter`); `doctor.py` and tests both check manifest/topology, but only tests check profile model/effort values; `test_install_materializes_...` repeats a subset of the per-profile test. | Same rules maintained in two places; drift risk. | Make `doctor.py` the single static validator (add profile value checks); tests run it once and keep behavioral installer tests; share one parser. Accept: every property asserted today is still checked exactly once; duplicates deleted. | S |
-| A-11 | P3 | Coverage | `setup.ps1` never executed (CI Windows runs only unittest/doctor; no pwsh locally). Docs claim Python 3.11+, CI covers 3.12/3.13 only. `$Profile` param shadows PowerShell's automatic `$PROFILE` (hypothesis: harmless, untested). | Windows launcher and minimum Python unverified. | With A-01: run `setup.ps1` smoke on a Windows runner if one exists, and test 3.11 or raise the stated minimum. | A-01. XS |
-| A-12 | P3 | Product text | `plugin/skills/orchestrate/SKILL.md`: "repository `CLAUDE.md` rules remain authoritative". Claude Code ≥2.1.277 also loads `AGENTS.md` as project instructions. | Orchestrator may underweight AGENTS.md-only repos. | Say "project instructions (CLAUDE.md / AGENTS.md)". Executable skill text → implementation task. | XS |
-| A-13 | P3 | Docs evidence | `docs/verification.md` "Current upstream caveats" cite issue reports without links or client versions. | Claims cannot be rechecked. | Add issue links/versions or remove after recheck. Tracked, not fixed. | XS |
+Reproductions (throwaway dirs): A-03 — `{"model":"sonnet","effortLevel":"low","x":1}` → install pro-balanced → uninstall → `{"x":1}`; install `max-20x-thorough` then install without `--profile` → SKILL `effort: high`, settings `xhigh`, marker `max-20x-thorough`; no-marker uninstall rewrites `{"a":  1}` as indented JSON. A-07 — a symlinked `.claude/plugins` sent the install to an external dir; `--profile ../…` reaches other JSON (rejected only by the schema check); the rollback test fails in `profile_data` before any write, so the restore branch never runs.
 
-### Documentation fixes applied in A-2026-10-09
-
-| ID | File | Correction |
-|---|---|---|
-| D-01 | `docs/models-and-plans.md`, `docs/research-sources.md` | `max` is session-only *unless* set via `CLAUDE_CODE_EFFORT_LEVEL`; settings keys reject it. |
-| D-02 | `docs/models-and-plans.md` | Haiku 5.5 in Claude Code needs v2.1.293+; Claude Code default effort for Opus/Sonnet/Haiku 5.5 is `medium`; project-level `effortLevel` applies to every model, while a user-level top-level key is ignored for Opus 5.5. `ANTHROPIC_API_KEY` wording made exact. |
-| D-03 | `docs/verification.md` | Rollback coverage claim narrowed to early failure (A-09). |
-| D-04 | `README.md` | "transactional" installer → rollback on ordinary failures; CI line stated the then-current A-01 restriction; superseded by the owner's hosted-CI decision above; plan linked. |
-| D-05 | `docs/security.md`, `docs/installation.md` | Caveats for A-03/A-04; Python minimum marked untested (A-11). |
-| D-06 | `docs/research-sources.md` | Recheck date and AGENTS.md loading facts (subagents load it except Explore/Plan). |
-
-Unverified: the Haiku 5.5 release date (2026-10-07) and Models API field dates in `docs/models-and-plans.md` were not found on the pages checked; left as stated.
-
-## Implementation queue
-
-Order: B-01 → A-01 hosted execution → A-03 + A-04 → A-07 → A-09 → A-05, A-06 → A-08 → A-11, A-12, A-13. Each block: local full suite + doctor + `sh -n setup.sh` + strict plugin validation; resource bound from `AGENTS.md`.
+Measurements (local, Claude Code 2.1.295, Python 3.14.7, audited at `2624a34`, median of 3): full suite 0.53 s; per-profile materialization test 274 ms (8 installer subprocesses); other installer tests 34–69 ms; one installer run ≈ 35 ms, mostly interpreter startup; plugin payload 28 KB. No heavy path: A-07 and A-08 are justified by simplicity and correctness, not speed.
