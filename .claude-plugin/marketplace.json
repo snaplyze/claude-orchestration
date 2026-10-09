@@ -1,0 +1,14 @@
+{
+  "name": "snaplyze-orchestration",
+  "description": "Claude Code orchestration plugins by snaplyze",
+  "owner": {
+    "name": "snaplyze"
+  },
+  "plugins": [
+    {
+      "name": "orchestration",
+      "source": "./plugin",
+      "description": "Adaptive multi-agent orchestration with bounded specialist subagents and risk-driven verification"
+    }
+  ]
+}

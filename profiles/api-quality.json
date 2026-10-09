@@ -1,0 +1,32 @@
+{
+  "settings": {
+    "model": "opus",
+    "effortLevel": "xhigh"
+  },
+  "skill": {
+    "model": "opus",
+    "effort": "xhigh"
+  },
+  "agents": {
+    "explorer": [
+      "haiku",
+      "low"
+    ],
+    "researcher": [
+      "sonnet",
+      "high"
+    ],
+    "worker": [
+      "sonnet",
+      "high"
+    ],
+    "tester": [
+      "sonnet",
+      "high"
+    ],
+    "reviewer": [
+      "opus",
+      "xhigh"
+    ]
+  }
+}

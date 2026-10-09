@@ -1,0 +1,22 @@
+name: Bug report
+description: Report a reproducible distribution, installer, or orchestration defect.
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Revision / release
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: Include sanitized commands and behavior; never include credentials or raw private sessions.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true

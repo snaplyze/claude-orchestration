@@ -1,0 +1,32 @@
+{
+  "settings": {
+    "model": "sonnet",
+    "effortLevel": "medium"
+  },
+  "skill": {
+    "model": "sonnet",
+    "effort": "medium"
+  },
+  "agents": {
+    "explorer": [
+      "haiku",
+      "low"
+    ],
+    "researcher": [
+      "sonnet",
+      "medium"
+    ],
+    "worker": [
+      "sonnet",
+      "medium"
+    ],
+    "tester": [
+      "sonnet",
+      "medium"
+    ],
+    "reviewer": [
+      "opus",
+      "medium"
+    ]
+  }
+}

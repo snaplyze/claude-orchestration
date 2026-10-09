@@ -1,0 +1,19 @@
+{
+  "name": "orchestration",
+  "displayName": "Claude Orchestration",
+  "version": "1.2.0",
+  "description": "Adaptive multi-agent orchestration for Claude Code with bounded delegation, specialized subagents, and risk-driven verification.",
+  "author": {
+    "name": "snaplyze"
+  },
+  "repository": "https://github.com/snaplyze/claude-orchestration",
+  "license": "Apache-2.0",
+  "keywords": [
+    "orchestration",
+    "agents",
+    "subagents",
+    "claude-code",
+    "developer-tools"
+  ],
+  "defaultEnabled": true
+}

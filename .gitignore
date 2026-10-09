@@ -1,0 +1,16 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+dist/
+build/
+tmp/
+temp/
+*.log
+.claude/settings.local.json
+.claude/agent-memory-local/
