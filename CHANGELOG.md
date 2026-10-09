@@ -2,9 +2,13 @@
 
 ## Unreleased
 
+## 1.4.0 — 2026-10-09
+
 - Installer `--user`: build a local marketplace (`orchestration-local`) whose plugin carries the selected profile, for a user-scope install in all projects; `--default-rule` manages a default-orchestration block in the user `CLAUDE.md`.
 - Fix: a successful reinstall or profile switch no longer leaves the previous plugin in `.claude/plugins/.orchestration-*` or prints "Previous plugin kept" (regression in 1.3.0).
-- `runtime_smoke.py --use-installed` checks an installed plugin instead of `--plugin-dir`.
+- `runtime_smoke.py --use-installed` checks an installed plugin instead of `--plugin-dir`; runs now delete the session transcripts they create (`--keep-sessions` keeps them).
+- `setup.ps1` supports `-User`, `-DefaultRule`, and `-MarketplaceDir`; CI smoke-tests user mode through both launchers.
+- Repository: rewritten README, `SECURITY.md`, Dependabot for GitHub Actions, issue forms (bug, feature) and an updated PR template, contributing and release guide.
 
 ## 1.3.0 — 2026-10-09
 

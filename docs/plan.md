@@ -4,10 +4,9 @@ Single planning entry point and task register (rules: `AGENTS.md`). One fact, on
 
 ## Current record
 
-- Status 2026-10-09: user-scope install (U-01) and the B-02 fix merged in PR #18 (`b582faf`); installed on the owner's machine with `max-20x-thorough` (Max 20x, confirmed by `claude auth status` / rate-limit tier) and the default-orchestration rule. Earlier: release 1.3.0 (PR #16, tag `v1.3.0`).
-- Runtime (Claude Code 2.1.295, subscription): installed copy 20/20 PASS via `--use-installed`; default rule delegates independent workstreams to `orchestration:*` roles and yields to project rules; hosted `runtime-smoke` on PR #18 PASS 20/20.
-- Blockers: none. Open audit IDs: none.
-- Next: no queued tasks. Unreleased: U-01, B-02 (B-02 fixes a 1.3.0 regression — a 1.3.1 release needs an owner decision).
+- Status 2026-10-09: readiness audit and release 1.4.0 (PR from `feat/polish-1.4`): user-scope install, B-02 fix, transcript cleanup in `runtime_smoke.py`, PowerShell user mode, repository presentation (README, SECURITY, Dependabot, issue/PR templates, CONTRIBUTING). Installed for the owner with `max-20x-thorough` and the default-orchestration rule.
+- Checks: unit tests, doctor, strict plugin and marketplace validation, launcher smokes; runtime smoke on the installed copy 20/20 PASS; hosted CI and runtime smoke on the release PR.
+- Blockers: none. Next: none queued — new work comes from an owner request or a new audit.
 
 ## Tasks
 
@@ -33,6 +32,7 @@ Status values: READY, BLOCKED, CONFIGURED_LOCAL (done locally, external acceptan
 | R-07 | P3 | DONE | Runtime smoke in CI on the owner's subscription: `runtime-smoke.yml` (GitHub-hosted Ubuntu, Claude Code 2.1.295 pinned, `CLAUDE_CODE_OAUTH_TOKEN` secret, manual + same-repo PRs touching plugin/profiles/installer; only runs authored and started by the repository owner, because the token is a personal subscription; skipped without the secret). | Owner creates the secret | A hosted run with the secret passes the headless modes for the bundled plugin and `max-20x-thorough`. Local emulation of CI's default permission mode PASS. Done: owner added the secret; manual run 37912677050 on `4aebad8` PASS 20/20, token masked (`***`) in logs. |
 | U-01 | P2 | DONE | User-scope install with a profile: `install.py --user --profile <p> [--default-rule]` builds a local marketplace loaded in place; managed default-orchestration block in the user `CLAUDE.md`. | — | Marketplace passes `claude plugin validate --strict`; installs at user scope and loads in place; rule block idempotent and removable without touching other text (unit test). |
 | B-02 | P2 | DONE | 1.3.0 regression: after a successful swap the old plugin stayed in `.orchestration-*/previous` and "Previous plugin kept" was printed, because cleanup checked only `previous.exists()`. Found by the U-01 test. | — | Reinstall/switch leaves only `orchestration` and prints nothing about kept copies (regression assertion); late-failure tests still pass. |
+| C-01 | P3 | DONE | Readiness cleanup: `runtime_smoke.py` left a Claude Code session directory per run in `~/.claude/projects` (40 found); it now deletes its own transcripts (and a then-empty project folder) after evaluation. PowerShell launcher gained user mode. Repository presentation brought to GitHub community standards. | U-01 | Unit test: only the run's own sessions are removed; live run leaves the projects count unchanged; CI smoke covers user mode on both launchers. |
 
 ## History (was → now → reason)
 
