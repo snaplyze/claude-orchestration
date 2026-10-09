@@ -1,17 +1,42 @@
 name: Bug report
-description: Report a reproducible distribution, installer, or orchestration defect.
+description: Report a reproducible plugin, installer, profile, or verification defect.
+labels: [bug]
 body:
   - type: input
     id: version
     attributes:
-      label: Revision / release
+      label: Plugin version or commit
+      placeholder: 1.4.0
     validations:
       required: true
+  - type: input
+    id: claude-code
+    attributes:
+      label: Claude Code version
+      description: Output of `claude --version`.
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: Install method
+      options:
+        - Marketplace (orchestration@snaplyze-orchestration)
+        - User scope (install.py --user)
+        - Project scope (install.py <project>)
+        - --plugin-dir
+    validations:
+      required: true
+  - type: input
+    id: profile
+    attributes:
+      label: Profile
+      placeholder: max-20x-thorough
   - type: textarea
     id: repro
     attributes:
       label: Reproduction
-      description: Include sanitized commands and behavior; never include credentials or raw private sessions.
+      description: Sanitized commands and observed behavior. `runtime_smoke.py` output helps for model/effort issues. Never include credentials or raw private sessions.
     validations:
       required: true
   - type: textarea

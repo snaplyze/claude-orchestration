@@ -42,6 +42,13 @@ jobs:
           ./setup.ps1 $t -Uninstall
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           if (Test-Path (Join-Path $t '.claude/plugins/orchestration')) { throw 'plugin not removed' }
+          $m = Join-Path $env:RUNNER_TEMP 'ps-marketplace'
+          ./setup.ps1 -User -Profile max-20x-thorough -MarketplaceDir $m
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          if (-not (Test-Path (Join-Path $m '.claude-plugin/marketplace.json'))) { throw 'marketplace not built' }
+          ./setup.ps1 -User -Uninstall -MarketplaceDir $m
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          if (Test-Path $m) { throw 'marketplace not removed' }
   shell:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -57,3 +64,7 @@ jobs:
           test -f "$t/.claude/plugins/orchestration/.claude-plugin/plugin.json"
           ./setup.sh "$t" --uninstall
           test ! -e "$t/.claude/plugins/orchestration"
+          ./setup.sh --user --profile max-20x-thorough --marketplace-dir "$t/marketplace"
+          test -f "$t/marketplace/.claude-plugin/marketplace.json"
+          ./setup.sh --user --uninstall --marketplace-dir "$t/marketplace"
+          test ! -e "$t/marketplace"

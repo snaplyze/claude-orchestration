@@ -36,6 +36,10 @@ claude plugin marketplace add ~/.claude-orchestration
 claude plugin install orchestration@orchestration-local --scope user
 ```
 
+On Windows the first step is `.\setup.ps1 -User -Profile max-20x-thorough -DefaultRule`
+(`-MarketplaceDir` overrides the directory); `./setup.sh --user …` works the same
+on macOS and Linux.
+
 - `--user` writes `~/.claude-orchestration` (`--marketplace-dir` to change it):
   `.claude-plugin/marketplace.json` (marketplace `orchestration-local`) and the
   plugin with the profile's model/effort in every frontmatter. Claude Code
