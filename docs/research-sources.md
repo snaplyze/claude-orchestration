@@ -33,7 +33,7 @@ Model and plan references:
 Important conclusions:
 
 1. Plugin namespace `orchestration` is deliberate: current validator rules reserve names that impersonate Anthropic, including `claude-` and `anthropic-` prefixes. Repository names are independent.
-2. Current fixed-effort roles use Sonnet/Opus because Haiku 4.5 does not support the current effort control.
+2. Explorer uses Haiku 5.5 with explicit `low` effort; other fixed-effort roles use Sonnet/Opus.
 3. `max` is session-only in normal settings; persistent profiles stop at `xhigh`.
 4. Plugin subagents ignore `hooks`, `mcpServers`, and `permissionMode` frontmatter for security.
 5. Agent Teams are experimental and disabled by default; they cost more context/usage than ordinary subagents.

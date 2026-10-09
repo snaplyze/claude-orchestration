@@ -42,7 +42,7 @@ This skill and every bundled specialist declare an explicit `model` and `effort`
 
 Treat those values as defaults with documented runtime precedence, not an entitlement guarantee. `CLAUDE_CODE_EFFORT_LEVEL` can override frontmatter, and organization `maxEffortLevel`/model policy can cap it. Verify the effective runtime when that distinction matters. If a configured model is unavailable, report the rejected model and use only a user-acceptable confirmed fallback.
 
-Do not silently raise or lower effort during a task. Routing decides *which* specialists to use, not their reasoning level. `max` remains session-only in normal settings and is intentionally absent from bundled profiles. Ultracode is a separate orchestration setting and is never enabled implicitly. Haiku is not used in fixed-effort roles because current Haiku 4.5 does not support the effort control.
+Do not silently raise or lower effort during a task. Routing decides *which* specialists to use, not their reasoning level. `max` remains session-only in normal settings and is intentionally absent from bundled profiles. Ultracode is a separate orchestration setting and is never enabled implicitly.
 
 ## Finish
 Account for every required assignment. Resolve conflicting findings, inspect the final diff, and run focused plus applicable repository-wide checks. Do not claim a subagent, teammate, model, test, commit, or publication action unless it actually occurred. Report outcome, changed paths, verification evidence, and remaining limits.
