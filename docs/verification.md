@@ -99,6 +99,8 @@ On 2026-10-09, Claude Code 2.1.295 (local, subscription):
 | Default permission mode (as in CI) | PASS for a role and the skill |
 | Marketplace install in an isolated `CLAUDE_CONFIG_DIR` | PASS: 1.2.0 from `main` installed and enabled |
 | `runtime-smoke.yml` on GitHub-hosted Ubuntu with the owner's subscription token | PASS 20/20 (run 37912677050): bundled plugin incl. `--agent` and read-only probes, and installed `max-20x-thorough` |
+| User-scope install (`install.py --user --profile max-20x-thorough --default-rule`, local marketplace loaded in place), checked with `--use-installed` | PASS 20/20: skill and reviewer `claude-opus-5-5`/xhigh, researcher/worker/tester `claude-sonnet-5-5`/high, explorer `claude-haiku-5-5`/low, headless and interactive; read-only and `--agent` as above |
+| Default-orchestration rule in the user `CLAUDE.md` | Loaded in a folder without project instructions. A task with three independent workstreams was delegated to `orchestration:explorer`, `orchestration:researcher`, and `orchestration:reviewer` (not built-in agents); a trivial task and a small four-file read were done directly; with a project `CLAUDE.md` forbidding subagents, nothing was delegated |
 
 The reviewer result shows behavior, not a guarantee: subagent frontmatter can
 list only whole tools, and `Bash(...)` in `disallowedTools` removes Bash
