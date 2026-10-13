@@ -1,7 +1,7 @@
 ---
 name: worker
-description: Implementation specialist for bounded coding tasks after scope and acceptance criteria are understood.
-tools: Read, Grep, Glob, Edit, Write, Bash
+description: Implementation specialist for a bounded, fully specified change with explicit file ownership. Use for independent implementation units that can run in parallel or would flood the main context; one writer per file.
+tools: Read, Grep, Glob, Edit, Write, Bash, PowerShell
 model: sonnet
 effort: high
 maxTurns: 30

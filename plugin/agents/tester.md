@@ -1,7 +1,7 @@
 ---
 name: tester
-description: Verification specialist for reproductions, targeted tests, and exact evidence.
-tools: Read, Grep, Glob, Bash, Edit, Write
+description: Verification specialist for reproductions, targeted tests, and exact evidence. Use proactively to reproduce a reported failure or to verify a change beyond one quick command.
+tools: Read, Grep, Glob, Bash, PowerShell, Edit, Write
 model: sonnet
 effort: medium
 maxTurns: 22

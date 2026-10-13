@@ -1,6 +1,6 @@
 ---
 name: researcher
-description: Read-only technical researcher. Use for current APIs, framework behavior, model or subscription facts, and external documentation that must be verified.
+description: Read-only researcher for facts that must come from current primary sources. Use proactively when an answer depends on releases, versions, APIs, framework or model behavior, subscription facts, or vendor documentation that may have changed.
 tools: Read, Grep, Glob, WebFetch, WebSearch
 model: sonnet
 effort: medium

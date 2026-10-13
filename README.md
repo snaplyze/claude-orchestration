@@ -20,7 +20,7 @@ Ordinary subagents are the default: they keep focused work in separate contexts 
 
 ## Install
 
-Requires [Claude Code](https://code.claude.com) (tested on 2.1.295) and, for the installer, Python 3.11+.
+Requires [Claude Code](https://code.claude.com) (tested on 2.1.296) and, for the installer, Python 3.11+.
 
 | Method | Scope | Topology | Use when |
 |---|---|---|---|
@@ -35,16 +35,17 @@ Requires [Claude Code](https://code.claude.com) (tested on 2.1.295) and, for the
 /plugin install orchestration@snaplyze-orchestration
 ```
 
+To make the roles the default in every repository, also install the rule from a checkout: `python scripts/install.py --default-rule`.
+
 ### User scope with a profile
 
 ```bash
 git clone https://github.com/snaplyze/claude-orchestration.git && cd claude-orchestration
-python scripts/install.py --user --profile max-20x-thorough --default-rule
-claude plugin marketplace add ~/.claude-orchestration
-claude plugin install orchestration@orchestration-local --scope user
+python scripts/install.py --user --profile max-20x-thorough --default-rule --register
+python scripts/install.py --status
 ```
 
-`--user` builds a local marketplace in `~/.claude-orchestration` whose plugin already carries the profile; Claude Code loads it in place. `--default-rule` adds a managed block to your user `CLAUDE.md` that makes the plugin's roles the default way to delegate unless a project's own instructions say otherwise. On Windows use `.\setup.ps1 -User -Profile max-20x-thorough -DefaultRule`.
+`--user` builds a local marketplace in `~/.claude-orchestration` whose plugin already carries the profile; Claude Code loads it in place. `--default-rule` installs the rule file `~/.claude/rules/claude-orchestration.md`, which makes the plugin's roles the default way to delegate in every repository unless the project's own instructions say otherwise. `--register` adds the marketplace and installs the plugin at user scope through the `claude` CLI, and `--status` checks that the rule, the build, and the registration are all in place. On Windows use `.\setup.ps1 -User -Profile max-20x-thorough -DefaultRule -Register`.
 
 ### Project scope
 
@@ -70,7 +71,7 @@ The installer never installs Claude Code, signs in, enables Agent Teams, buys us
 
 ## Use
 
-With the default rule installed, just work: independent or parallel workstreams go to the `orchestration:*` roles, and small, sequential tasks stay in the main session. To let the coordinator skill run a task at its own model and effort, start the message with the skill:
+With the default rule installed, just work, in any repository: unfamiliar multi-file code goes to explorers in parallel, current external facts to the researcher, independent implementation units to workers, verification to the tester, and a material change gets an independent review before it is reported done; small, sequential tasks stay in the main session, and a project's own instructions win where they differ. To let the coordinator skill run a task at its own model and effort, start the message with the skill:
 
 ```text
 /orchestration:orchestrate Normal mode. Audit this change and use only useful bounded delegation.
@@ -84,19 +85,18 @@ Modes: **Economy** keeps small work in the main session, **Normal** (default) de
 python -m unittest discover -v                 # installer, validator, and smoke-evaluation tests
 python scripts/doctor.py                        # manifest, frontmatter, profiles, and doc tables
 claude plugin validate --strict ./plugin
-python scripts/runtime_smoke.py --skill --tool-surface --agent-path
+python scripts/runtime_smoke.py --skill --tool-surface --capabilities --agent-path
+python scripts/runtime_smoke.py --roles "" --default-rule
 ```
 
-`runtime_smoke.py` runs real Claude Code sessions under your login and checks each role's effective model and effort from hooks and transcripts; add `--use-installed --plugin-dir ~/.claude-orchestration/plugin` to check a user install, or `--interactive` for a TUI session. Results and the CI setup are in [verification](docs/verification.md).
+`runtime_smoke.py` runs real Claude Code sessions under your login and checks each role's effective model and effort from hooks and transcripts; `--default-rule` checks that the rule makes a session in an unfamiliar repository delegate to the roles, and not for a one-file lookup or when the project forbids it. Add `--use-installed --plugin-dir ~/.claude-orchestration/plugin` to check a user install, or `--interactive` for a TUI session. Results and the CI setup are in [verification](docs/verification.md).
 
 ## Update and remove
 
 Update a user install with `git pull` and the same `install.py --user …` command, then restart Claude Code sessions. Remove it with:
 
 ```bash
-claude plugin uninstall orchestration@orchestration-local
-claude plugin marketplace remove orchestration-local
-python scripts/install.py --user --uninstall --default-rule
+python scripts/install.py --user --uninstall --default-rule --register
 ```
 
 ## Documentation

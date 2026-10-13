@@ -29,6 +29,12 @@ def check(root: Path = R) -> list[str]:
         if name != "orchestration": errors.append("plugin name must be orchestration")
         if name.startswith(RESERVED): errors.append("plugin uses reserved prefix")
     except Exception as e: errors.append(f"manifest: {e}")
+    try:
+        market = json.loads((root / ".claude-plugin/marketplace.json").read_text(encoding="utf-8"))
+        entries = [(p.get("name"), p.get("source")) for p in market.get("plugins", [])]
+        if entries != [("orchestration", "./plugin")]: errors.append(f"marketplace.json must list only orchestration from ./plugin, found {entries}")
+        if not market.get("name") or str(market["name"]).startswith(RESERVED): errors.append("marketplace.json: missing or reserved marketplace name")
+    except Exception as e: errors.append(f"marketplace: {e}")
 
     shipped, turns, documented = {}, {}, {}
     agent_files = {p.stem: p for p in (root / "plugin/agents").glob("*.md")}
@@ -57,26 +63,35 @@ def check(root: Path = R) -> list[str]:
                 expected = {"skill": [d["skill"].get("model"), d["skill"].get("effort")], **d["agents"]}
                 if shipped != expected: errors.append(f"plugin frontmatter must match {p.name}")
         except Exception as e: errors.append(f"{p.name}: {e}")
+    try:
+        named = set(re.findall(r"`orchestration:(\w+)`", (root / "scripts/default-orchestration-rule.md").read_text(encoding="utf-8")))
+        if named != AGENTS: errors.append(f"default-orchestration-rule.md must name exactly the roles {sorted(AGENTS)}, found {sorted(named)}")
+    except OSError as e: errors.append(f"rule: {e}")
     return errors + doc_errors(root, documented, shipped, turns)
 
 
-def table_rows(path: Path, first_cell: str) -> dict[str, list[str]]:
-    """Map the first cell of each Markdown table row matching first_cell (a regex) to its remaining cells."""
+def table_rows(path: Path, first_cell: str, errors: list[str]) -> dict[str, list[str]]:
+    """Map the first cell of each Markdown table row matching first_cell (a regex) to its remaining cells; a repeated
+    first cell is an error, because one of the two rows would go unchecked."""
     rows = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         cells = [c.strip() for c in line.strip().strip("|").split("|")] if line.startswith("|") else []
-        if cells and re.fullmatch(first_cell, cells[0]): rows[cells[0].strip("`")] = cells[1:]
+        if cells and re.fullmatch(first_cell, cells[0]):
+            key = cells[0].strip("`")
+            if key in rows: errors.append(f"{path.parent.name}/{path.name}: duplicate row {key}")
+            rows[key] = cells[1:]
     return rows
 
 
 def doc_errors(root: Path, documented: dict, shipped: dict, turns: dict) -> list[str]:
     """The topology tables in the docs are derived data: they must match the profiles and plugin frontmatter."""
     errors = []
-    profile_rows = table_rows(root / "docs/models-and-plans.md", r"`[a-z0-9-]+`")
+    profile_rows = table_rows(root / "docs/models-and-plans.md", r"`[a-z0-9-]+`", errors)
     for name, pairs in documented.items():
         want = [f"{str(model).capitalize()} {effort}" for model, effort in pairs]
         if profile_rows.get(name) != want: errors.append(f"docs/models-and-plans.md: row {name} must be {want}, found {profile_rows.get(name)}")
-    component_rows = table_rows(root / "docs/architecture.md", "orchestrator skill|" + "|".join(ROLE_ORDER))
+    errors += [f"docs/models-and-plans.md: row {name} has no profile" for name in sorted(set(profile_rows) - set(documented))]
+    component_rows = table_rows(root / "docs/architecture.md", "orchestrator skill|" + "|".join(ROLE_ORDER), errors)
     for key in ("skill", *ROLE_ORDER):
         want = [*shipped.get(key, ["?", "?"]), str(turns.get(key))]
         found = component_rows.get("orchestrator skill" if key == "skill" else key, [])[:3]

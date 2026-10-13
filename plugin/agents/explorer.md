@@ -1,6 +1,6 @@
 ---
 name: explorer
-description: Read-only repository explorer. Use for locating files, symbols, execution paths, dependencies, configuration, and tests before implementation.
+description: Read-only codebase explorer on a fast model. Use proactively, instead of the built-in Explore agent, when answering needs code you have not read across several files, such as locating files and symbols, tracing call and data flows, or mapping configuration and tests before a change. Run one per independent area, in parallel.
 tools: Read, Grep, Glob
 model: haiku
 effort: low

@@ -1,6 +1,6 @@
 name: Runtime smoke
 # Real Claude Code runs against the plugin (scripts/runtime_smoke.py), authenticated with the owner's
-# subscription token (CLAUDE_CODE_OAUTH_TOKEN from `claude setup-token`). Without the secret the job is skipped.
+# subscription token (CLAUDE_CODE_OAUTH_TOKEN from `claude setup-token`). Without the secret the job reports NOT_TESTED.
 on:
   workflow_dispatch:
   pull_request:
@@ -9,6 +9,7 @@ on:
       - profiles/**
       - scripts/install.py
       - scripts/runtime_smoke.py
+      - scripts/default-orchestration-rule.md
       - .github/workflows/runtime-smoke.yml
 permissions:
   contents: read
@@ -24,30 +25,49 @@ jobs:
       github.triggering_actor == github.repository_owner &&
       (github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    env:
-      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+    timeout-minutes: 25
     steps:
-      - name: Skip without subscription token
-        if: env.CLAUDE_CODE_OAUTH_TOKEN == ''
-        run: echo "::notice::CLAUDE_CODE_OAUTH_TOKEN is not set; runtime smoke skipped."
+      - name: Check for the subscription token
+        id: token
+        env:
+          TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          if [ -n "$TOKEN" ]; then echo "present=true" >> "$GITHUB_OUTPUT"; else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::CLAUDE_CODE_OAUTH_TOKEN is not set; runtime smoke NOT_TESTED."
+            echo "### Runtime smoke: NOT_TESTED (no CLAUDE_CODE_OAUTH_TOKEN secret)" >> "$GITHUB_STEP_SUMMARY"
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        if: env.CLAUDE_CODE_OAUTH_TOKEN != ''
+        if: steps.token.outputs.present == 'true'
         with:
           persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
-        if: env.CLAUDE_CODE_OAUTH_TOKEN != ''
+        if: steps.token.outputs.present == 'true'
         with:
           python-version: '3.13'
       - name: Install Claude Code (pinned)
-        if: env.CLAUDE_CODE_OAUTH_TOKEN != ''
-        run: npm install --global @anthropic-ai/claude-code@2.1.295
+        if: steps.token.outputs.present == 'true'
+        run: npm install --global @anthropic-ai/claude-code@2.1.296
       - name: Bundled plugin
-        if: env.CLAUDE_CODE_OAUTH_TOKEN != ''
-        run: python scripts/runtime_smoke.py --skill --tool-surface --agent-path --budget 1
+        if: steps.token.outputs.present == 'true'
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: python scripts/runtime_smoke.py --skill --tool-surface --agent-path --default-rule --rule-cases lookup --runs 1 --budget 1
       - name: Installed max-20x-thorough profile
-        if: env.CLAUDE_CODE_OAUTH_TOKEN != ''
+        if: steps.token.outputs.present == 'true'
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
           t=$(mktemp -d)
           python scripts/install.py "$t" --profile max-20x-thorough
           python scripts/runtime_smoke.py --skill --plugin-dir "$t/.claude/plugins/orchestration" --budget 1
+      - name: User install under CLAUDE_CONFIG_DIR
+        if: steps.token.outputs.present == 'true'
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          t=$(mktemp -d)
+          export CLAUDE_CONFIG_DIR="$t/config"
+          python scripts/install.py --user --profile max-20x-thorough --default-rule --register --marketplace-dir "$t/marketplace"
+          python scripts/install.py --status --marketplace-dir "$t/marketplace"
+          python scripts/runtime_smoke.py --use-installed --plugin-dir "$t/marketplace/plugin" --roles reviewer --skill --default-rule --rule-cases lookup --runs 1 --budget 1
