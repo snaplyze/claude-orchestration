@@ -4,10 +4,10 @@ Single planning entry point and task register (rules: `AGENTS.md`). One fact, on
 
 ## Current record
 
-- Status 2026-10-13: all A-2026-10-13 tasks done and merged in PR #28 (`a0eb92b`, closes #27); release 1.5.0 prepared on `release/1.5.0`. Measured on Claude Code 2.1.296: the default rule passes all five `--default-rule` cases 3/3 (the 1.4.1 text never reviewed a multi-file change); hosted CI 10/10 and runtime smoke on PR #28 PASS.
-- Owner's machine 2026-10-13: the 2026-10-09 user install is gone (no plugin, no rule). The owner approved restoring it with the new orchestration once 1.5.0 is tested and released: `install.py --user --profile max-20x-thorough --default-rule --register`, then `--status` and `runtime_smoke.py --use-installed`.
+- Status 2026-10-13: project ready. All A-2026-10-13 tasks done (PR #28, `a0eb92b`, closes #27); release 1.5.0 published (PR #30, tag `v1.5.0` on `e69e7d5`, GitHub Release). On Claude Code 2.1.296 the default rule passes all five `--default-rule` cases 3/3 (the 1.4.1 text never reviewed a multi-file change); hosted CI and runtime smoke PASS on both PRs.
+- Owner's machine 2026-10-13: user install restored with 1.5.0 by owner approval — `orchestration@orchestration-local` at user scope, `max-20x-thorough`, rule file `~/.claude/rules/claude-orchestration.md`; `install.py --status` 3/3 OK; installed copy headless 21/21 and interactive 11/11 via `--use-installed`. Other user settings unchanged (only `enabledPlugins` and `extraKnownMarketplaces` gained the entry). Sessions started before the install need a restart to load the plugin.
 - GitHub: private vulnerability reporting, secret scanning with push protection, Dependabot alerts and security updates enabled; topics and description set; Projects off.
-- Blockers: none. Next: publish 1.5.0 (tag `v1.5.0`, GitHub Release), restore the owner's user install, record the check.
+- Blockers: none. Next: none queued. Open, NOT_TESTED: the roles' runtime on Windows (no Windows Claude Code run).
 
 ## Tasks
 

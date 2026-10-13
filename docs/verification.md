@@ -137,6 +137,7 @@ On 2026-10-13, Claude Code 2.1.296 (local, subscription; the user settings set O
 | A 135-line fixture (discarded) | Opus read it directly ("about 135 lines, so I read the call chains myself"), which the rule allows, so the accepted fixture has ~4,700 lines |
 | Roles, skill, read-only probes, `--agent`, after this release's agent changes | PASS 16/16: models and efforts as on 2026-10-09; explorer found the hidden file with `Glob`, researcher fetched the page with `WebFetch` (`--capabilities`) |
 | Interactive (tmux server with its socket in the run's work directory) | PASS 11/11: skill and five roles; no tmux server, socket, or session transcript left behind |
+| Released 1.5.0 installed on the owner's machine (`install.py --user --profile max-20x-thorough --default-rule --register`), checked with `--use-installed` | `--status` 3/3 OK; headless 21/21 (roles and skill at the profile's values, reviewer and skill `xhigh`; read-only and capability probes; `--agent`; all five rule cases with the rule loaded from `~/.claude/rules/`, 1 run each), interactive 11/11; $2.21 |
 | `install.py --user --default-rule --register` in an isolated `CLAUDE_CONFIG_DIR` | `--status` 3/3 OK; a rerun left `settings.json` byte-identical; `--uninstall --register` removed the registration |
 
 On 2026-10-09, Claude Code 2.1.295 (local, subscription):
