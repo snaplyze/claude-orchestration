@@ -22,9 +22,10 @@ and a generated user marketplace; the validator needs no login, so that job
 has no secret. Python is provided by SHA-pinned `actions/setup-python`.
 
 Triggers are pushes to `main`, pull requests, and manual dispatch. PR branch
-pushes do not also create a separate push run. Superseded PR runs are
-cancelled, while every push to `main` keeps its own complete run; test jobs
-have a 15-minute timeout, the shell job 5 minutes, and the plugin job 10.
+pushes do not also create a separate push run. A new push to a PR cancels the
+superseded run of that PR; a push to `main` or a manual run is grouped by its
+commit, so it is never cancelled or replaced by a later one. Test jobs have a
+15-minute timeout, the shell job 5 minutes, and the plugin job 10.
 The token has `contents: read`, checkout does not persist credentials, and all
 external contributors require approval before their fork PR workflows run.
 

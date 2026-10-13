@@ -192,14 +192,16 @@ def write_fixture(root: Path) -> None:
 
 def agent_calls(events: list[dict]) -> list[dict]:
     """Agent tool inputs issued by the main session (calls made inside a subagent carry agent_id)."""
-    return [e.get("tool_input") or {} for e in events if e.get("hook_event_name") == "PreToolUse" and e.get("tool_name") == "Agent" and "agent_id" not in e]
+    return [e.get("tool_input") or {} for e in events if e.get("hook_event_name") == "PreToolUse" and e.get("tool_name") in ("Agent", "Task") and "agent_id" not in e]
 
 
-def rule_run(events: list[dict], expect: frozenset | None) -> tuple[bool, str]:
-    """Judge one --default-rule run. The rule must be loaded; then, with expect None, no Agent call at all; otherwise
-    only orchestration roles, including every role in expect, dispatched without model/effort overrides."""
-    if not any(Path(e.get("file_path", "")).name == RULE_FILE for e in events if e.get("hook_event_name") == "InstructionsLoaded"):
-        return False, "rule not loaded"
+def rule_run(events: list[dict], expect: frozenset | None, source: Path | None = None) -> tuple[bool, str]:
+    """Judge one --default-rule run. The rule must be loaded (from under source, when given); then, with expect None,
+    no Agent call at all; otherwise only orchestration roles, including every role in expect, without model/effort
+    overrides. "Task" is the Agent tool's former name."""
+    loaded = [Path(e.get("file_path", "")) for e in events if e.get("hook_event_name") == "InstructionsLoaded"]
+    if not any(p.name == RULE_FILE and (source is None or p.resolve().is_relative_to(source.resolve())) for p in loaded):
+        return False, "rule not loaded" + (f" from {source}" if source else "")
     calls = agent_calls(events)
     types = [c.get("subagent_type") or "general-purpose" for c in calls]
     roles = [c for c, t in zip(calls, types) if t.startswith("orchestration:")]
@@ -348,8 +350,8 @@ def main() -> int:
         """Run one mode; a failed run becomes a FAIL row instead of discarding the results so far."""
         try:
             check()
-        except (RunFailed, RuntimeError, subprocess.SubprocessError) as e:
-            results.append({"name": name, "want": "a completed run", "seen": f"error: {str(e)[:160]}", "ok": False})
+        except (RuntimeError, subprocess.SubprocessError, OSError, KeyError, ValueError) as e:
+            results.append({"name": name, "want": "a completed run", "seen": f"error: {type(e).__name__}: {str(e)[:160]}", "ok": False})
 
     with tempfile.TemporaryDirectory(prefix="orchestration-smoke-") as td:
         names = ", ".join(f"orchestration:{r}" for r in roles)
@@ -391,14 +393,15 @@ def main() -> int:
             results.append(check_agent_session(load_events(work / "hooks.jsonl"), frontmatter(plugin_dir / "agents" / f"{role}.md"), role))
 
         def default_rule(name: str, task: str, project_rules: str | None, expect: frozenset | None):
-            cfg = Path(os.environ.get("CLAUDE_CONFIG_DIR") or "~/.claude").expanduser().resolve()
-            extra, settings, env = (), None, None
+            cfg = Path(os.environ.get("CLAUDE_CONFIG_DIR") or "~/.claude").expanduser()
+            extra, settings, env, source = (), None, None, None
             if not args.use_installed:  # bundled rule through --add-dir; the user's own instructions are left out
                 rules = Path(td) / "user-rules" / ".claude/rules"
                 rules.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(RULE, rules / RULE_FILE)
+                source = rules
                 extra, env = ("--add-dir", str(rules.parents[1])), {"CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD": "1"}
-                settings = {"claudeMdExcludes": [str(cfg / "CLAUDE.md"), str(cfg / "rules") + "/**"]}
+                settings = {"claudeMdExcludes": sorted({pattern for d in (cfg, cfg.resolve()) for pattern in (str(d / "CLAUDE.md"), str(d / "rules") + "/**")})}
             runs = []
             for i in range(args.runs):
                 work = Path(td) / f"rule-{name.replace(' ', '-')}-{i}"
@@ -411,7 +414,7 @@ def main() -> int:
                 except (RunFailed, subprocess.TimeoutExpired) as e:
                     runs.append((False, f"error: {str(e)[:80]}"))
                     continue
-                ok, seen = rule_run(load_events(work / "hooks.jsonl"), expect)
+                ok, seen = rule_run(load_events(work / "hooks.jsonl"), expect, source)
                 if name in ANSWERS:
                     seen += f", answer {'right' if all(a in str(out.get('result', '')) for a in ANSWERS[name]) else 'wrong'}"
                 runs.append((ok, f"{seen}, ${cost_of(out):.2f}"))

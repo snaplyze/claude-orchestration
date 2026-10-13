@@ -56,9 +56,9 @@ and `.\setup.ps1 -Status` (`-MarketplaceDir` overrides the directory);
   (rewritten on install, deleted on uninstall) and refuses to overwrite a file
   of that name it did not write. The text is `scripts/default-orchestration-rule.md`.
   Installers before 1.5 kept the rule as a `claude-orchestration:managed` block
-  in the user `CLAUDE.md`; installing or removing the rule takes that block out
-  and leaves the rest of the file byte for byte, or refuses without writing if
-  the markers are damaged.
+  in the user `CLAUDE.md`; installing or removing the rule takes that block out,
+  with the blank lines the old installer put before it, and leaves the rest of
+  the file alone, or refuses without writing if the markers are damaged.
 - `--register` runs `claude plugin marketplace add` and
   `claude plugin install orchestration@orchestration-local --scope user`
   (or `enable`) only when needed, so a rerun changes nothing, and then checks
@@ -68,9 +68,14 @@ and `.\setup.ps1 -Status` (`-MarketplaceDir` overrides the directory);
   `orchestration@snaplyze-orchestration`): both register the same plugin.
   Without `--register`, run those two commands yourself.
 - `--status` prints one line per requirement, OK or TODO: the rule file is
-  current, no pre-1.5 block is left in `CLAUDE.md`, the build matches this
-  checkout's version, and the plugin is enabled from it with no conflict. It
-  exits 1 while anything is TODO.
+  current, no pre-1.5 block is left in `CLAUDE.md`, and an orchestration plugin
+  is enabled. With a local build, the build must match what this checkout
+  would write (file by file) and the plugin must be enabled from it with no
+  other `orchestration` plugin enabled; without one, exactly one enabled
+  `orchestration` plugin from any marketplace counts. It exits 1 while
+  anything is TODO.
+- `--user --uninstall --register` removes the registration only when it points
+  at this marketplace directory.
 - `--default-rule` alone (no `--user`) installs or, with `--uninstall`, removes
   only the rule, for example next to the GitHub marketplace plugin.
 - Root `model`/`effortLevel` are not written in user mode: the skill and each

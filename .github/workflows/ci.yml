@@ -7,9 +7,10 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  # Superseded PR runs are cancelled; every push to main keeps its own complete run.
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # PR runs share a group per branch, so a new push cancels the superseded run; any other run (a push to main,
+  # a manual dispatch) gets a group of its own commit and is never cancelled or replaced by a later one.
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: true
 jobs:
   test:
     name: ${{ matrix.os }} / Python ${{ matrix.python }}
@@ -56,7 +57,7 @@ jobs:
           if (-not (Test-Path (Join-Path $env:CLAUDE_CONFIG_DIR 'rules/claude-orchestration.md'))) { throw 'rule not installed' }
           ./setup.ps1 -DefaultRule -Uninstall
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          if (Test-Path (Join-Path $env:CLAUDE_CONFIG_DIR 'rules')) { throw 'rule not removed' }
+          if (Test-Path (Join-Path $env:CLAUDE_CONFIG_DIR 'rules/claude-orchestration.md')) { throw 'rule not removed' }
   shell:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -79,7 +80,7 @@ jobs:
           CLAUDE_CONFIG_DIR="$t/config" ./setup.sh --default-rule
           test -f "$t/config/rules/claude-orchestration.md"
           CLAUDE_CONFIG_DIR="$t/config" ./setup.sh --default-rule --uninstall
-          test ! -e "$t/config/rules"
+          test ! -e "$t/config/rules/claude-orchestration.md"
   plugin:
     # Claude Code's own validator; it needs no login, so this job has no secret.
     runs-on: ubuntu-latest

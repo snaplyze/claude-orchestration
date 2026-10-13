@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Safely install/update Claude Orchestration and materialize a selected model/effort profile."""
 from __future__ import annotations
-import argparse, json, os, re, shutil, subprocess, sys, tempfile
+import argparse, json, os, re, shutil, stat, subprocess, sys, tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -37,10 +37,17 @@ def is_link(path: Path) -> bool:
 
 def atomic_write(path: Path, data: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        mode = stat.S_IMODE(path.stat().st_mode)
+    else:
+        umask = os.umask(0)
+        os.umask(umask)
+        mode = 0o666 & ~umask
     fd, tmp = tempfile.mkstemp(prefix=".claude-orchestration-", dir=path.parent)
     try:
         with os.fdopen(fd, "wb") as fh:
             fh.write(data)
+        os.chmod(tmp, mode)  # mkstemp creates 0600; keep the file's mode, or the usual one for a new file
         os.replace(tmp, path)
     finally:
         if os.path.exists(tmp):
@@ -169,8 +176,8 @@ def plugin_destination(target: Path) -> Path:
 def transaction(writes: dict[Path, bytes | None], dest: Path | None = None, profile: dict | None = None) -> None:
     """Apply file writes (None removes a file) and, with dest, stage the plugin (with profile) beside dest and swap it in.
 
-    On failure every file gets its previous bytes back, directories created here are removed again, and the previous
-    plugin directory is restored.
+    On failure the previous plugin directory is restored, every file gets its previous bytes back, and directories
+    created here are removed again; each restore step runs on its own, and the original error propagates.
     """
     before = {path: path.read_bytes() if path.exists() else None for path in writes}
     created = missing_dirs([*(path.parent for path in writes), *([dest.parent] if dest else [])])
@@ -193,13 +200,19 @@ def transaction(writes: dict[Path, bytes | None], dest: Path | None = None, prof
             os.replace(stage, dest)
         done = True
     except BaseException:
-        for path, data in before.items():
-            if (path.read_bytes() if path.exists() else None) != data:
-                put(path, data)
         if previous and previous.exists():
-            if dest.exists():
-                shutil.rmtree(dest)
-            os.replace(previous, dest)
+            try:
+                if dest.exists():
+                    shutil.rmtree(dest)
+                os.replace(previous, dest)
+            except OSError as e:
+                print(f"Could not restore the previous plugin: {e}", file=sys.stderr)
+        for path, data in before.items():
+            try:
+                if (path.read_bytes() if path.exists() else None) != data:
+                    put(path, data)
+            except OSError as e:
+                print(f"Could not restore {path}: {e}", file=sys.stderr)
         raise
     finally:
         if previous and previous.exists() and not done:  # the restore itself failed: keep the only copy of the old plugin
@@ -245,7 +258,7 @@ def uninstall(target: Path) -> None:
 
 
 def without_legacy_block(data: bytes, path: Path) -> bytes | None:
-    """CLAUDE.md bytes without the pre-1.5 managed block and the blank line set before it; None when there is no block."""
+    """CLAUDE.md bytes without the pre-1.5 managed block and the blank lines set before it; None when there is no block."""
     lines = data.splitlines(keepends=True)
     begins = [i for i, line in enumerate(lines) if line.strip() == LEGACY_BEGIN]
     ends = [i for i, line in enumerate(lines) if line.strip() == LEGACY_END]
@@ -254,9 +267,13 @@ def without_legacy_block(data: bytes, path: Path) -> bytes | None:
     if len(begins) != 1 or len(ends) != 1 or begins[0] > ends[0]:
         raise ValueError(f"{path}: malformed claude-orchestration:managed markers; remove the old block by hand, then rerun")
     start, end = begins[0], ends[0] + 1
-    if start and not lines[start - 1].strip():
+    if not b"".join(lines[end:]).strip():  # the block ends the file: drop the blank lines the old installer put before it
+        while start and not lines[start - 1].strip():
+            start -= 1
+        end = len(lines)
+    elif start and not lines[start - 1].strip():
         start -= 1
-    elif end < len(lines) and not lines[end].strip():
+    elif not lines[end].strip():
         end += 1
     return b"".join(lines[:start] + lines[end:])
 
@@ -319,8 +336,6 @@ def install_user(root: Path, profile_name: str, config_dir: Path | None = None) 
 
 def set_rule(config_dir: Path, enable: bool) -> None:
     transaction(rule_writes(config_dir, enable))
-    if not enable:
-        remove_empty([rule_path(config_dir).parent])
 
 
 def uninstall_user(root: Path, config_dir: Path | None = None) -> list[Path]:
@@ -391,35 +406,63 @@ def register(claude: list[str], root: Path) -> None:
 
 
 def unregister(claude: list[str], root: Path) -> None:
+    """Uninstall the plugin and remove the marketplace, only when they were registered from root."""
     marketplace, plugin, _ = registration(claude, root)
+    if marketplace and Path(marketplace.get("path", "")).resolve() != root:
+        raise ValueError(f"{LOCAL_MARKETPLACE} is registered from {marketplace.get('path')}, not {root}; pass that --marketplace-dir")
     if plugin:
         claude_json(claude, "uninstall", PLUGIN_ID, "--scope", "user")
-    if marketplace and Path(marketplace.get("path", "")).resolve() == root:
+    if marketplace:
         claude_json(claude, "marketplace", "remove", LOCAL_MARKETPLACE, "--scope", "user")
 
 
+def build_profile(root: Path) -> str | None:
+    match = re.search(r"\((\S+) profile\)", str(load_json(root / ".claude-plugin/marketplace.json").get("description")))
+    return match[1] if match else None
+
+
+def build_is_current(root: Path, profile_name: str | None) -> bool:
+    """Whether root/plugin holds exactly what installing profile_name from this checkout would write."""
+    if profile_name not in {p.stem for p in PROFILES.glob("*.json")}:
+        return False
+    with tempfile.TemporaryDirectory() as td:
+        stage = Path(td) / "plugin"
+        shutil.copytree(PLUGIN, stage)
+        materialize_profile(stage, profile_data(profile_name))
+        files = lambda d: {p.relative_to(d): p.read_bytes() for p in d.rglob("*") if p.is_file()}
+        return files(stage) == files(root / "plugin")
+
+
 def status(claude: list[str] | None, root: Path, config_dir: Path) -> list[tuple[bool, str]]:
-    """Checks that together make orchestration the default: rule file, marketplace build, user-scope registration."""
+    """Checks that together make orchestration the default: the rule file, and an enabled orchestration plugin (the
+    local build registered at user scope, or one plugin from another marketplace)."""
     rule, legacy = rule_path(config_dir), config_dir / "CLAUDE.md"
     data = rule.read_bytes() if rule.is_file() else None
     current = data == RULE_HEADER + RULE_TEMPLATE.read_bytes()
     state = "current" if current else "absent" if data is None else "outdated" if data.startswith(RULE_HEADER) else "not written by this installer"
     checks = [(current, f"rule {rule}: {state}")]
-    if legacy.is_file() and LEGACY_BEGIN in legacy.read_bytes():
-        checks.append((False, f"{legacy}: still holds the pre-1.5 managed block (rerun with --default-rule)"))
-    if built_here(root):
-        manifest = json.loads((root / ".claude-plugin/marketplace.json").read_text(encoding="utf-8"))
-        profile = (re.search(r"\((\S+) profile\)", str(manifest.get("description"))) or [None, "?"])[1]
-        version, shipped = (load_json(d / ".claude-plugin/plugin.json").get("version") for d in (root / "plugin", PLUGIN))
-        checks.append((version == shipped, f"marketplace {root}: profile {profile}, plugin {version}" + ("" if version == shipped else f" (this checkout has {shipped})")))
-    else:
-        checks.append((False, f"marketplace {root}: not built"))
+    if legacy.is_file():
+        try:
+            if without_legacy_block(legacy.read_bytes(), legacy) is not None:
+                checks.append((False, f"{legacy}: still holds the pre-1.5 managed block (rerun with --default-rule)"))
+        except ValueError:
+            checks.append((False, f"{legacy}: damaged pre-1.5 managed markers (remove the block by hand)"))
+    local = built_here(root)
+    if local:
+        profile = build_profile(root)
+        fresh = build_is_current(root, profile)
+        checks.append((fresh, f"marketplace {root}: profile {profile}, " + ("matches this checkout" if fresh else "differs from this checkout (rerun --user)")))
     if claude is None:
-        return checks + [(False, "claude CLI not found: registration not checked")]
-    marketplace, plugin, others = registration(claude, root)
-    where = plugin and (plugin.get("readFromFolder") or plugin.get("installPath"))
-    checks.append((loads_from(plugin, root), f"plugin {PLUGIN_ID}: " + ("not installed at user scope" if plugin is None else f"{'enabled' if plugin.get('enabled') else 'disabled'}, loads from {where}")))
-    checks += [(False, f"conflict: {other} is also enabled") for other in others]
+        return checks + [(False, "claude CLI not found: plugin registration not checked")]
+    _, plugin, others = registration(claude, root)
+    if local or plugin:
+        where = plugin and (plugin.get("readFromFolder") or plugin.get("installPath"))
+        checks.append((loads_from(plugin, root), f"plugin {PLUGIN_ID}: " + ("not installed at user scope" if plugin is None else f"{'enabled' if plugin.get('enabled') else 'disabled'}, loads from {where}")))
+        checks += [(False, f"conflict: {other} is also enabled") for other in others]
+    elif len(others) == 1:
+        checks.append((True, f"plugin {others[0]}: enabled"))
+    else:
+        checks.append((False, f"conflict: {', '.join(others)} are all enabled" if others else "no orchestration plugin is enabled (install it from a marketplace, or use --user --register)"))
     return checks
 
 
@@ -446,11 +489,12 @@ def main() -> None:
 
 def run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     config_dir = Path(os.environ.get("CLAUDE_CONFIG_DIR") or "~/.claude").expanduser()
-    claude = [args.claude]
+    found = shutil.which(args.claude)  # the full path, so a Windows npm shim (claude.cmd) runs too
+    claude = [found or args.claude]
     if args.status:
         if args.target or args.profile or args.uninstall or args.register:
             parser.error("--status runs alone")
-        checks = status(claude if shutil.which(args.claude) else None, marketplace_dir(args.marketplace_dir), config_dir)
+        checks = status(claude if found else None, marketplace_dir(args.marketplace_dir), config_dir)
         print("\n".join(("OK    " if ok else "TODO  ") + line for ok, line in checks))
         return 0 if all(ok for ok, _ in checks) else 1
     if args.register and not args.user:
