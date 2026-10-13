@@ -210,6 +210,42 @@ class DistributionTests(unittest.TestCase):
             self.assertEqual(((t/".claude/settings.json").read_bytes(),err.getvalue()),(before,""))
             self.assertEqual(frontmatter(t/".claude/plugins/orchestration/skills/orchestrate/SKILL.md")["effort"],"xhigh")
             self.assertEqual([p.name for p in (t/".claude/plugins").iterdir()],["orchestration"])
+    def test_refresh_keeps_a_managed_key_the_user_changed(self):
+        with tempfile.TemporaryDirectory() as td:
+            t=Path(td); (t/".claude").mkdir(); (t/".claude/settings.json").write_text(json.dumps({"model":"sonnet","x":1})); install.install(t,"pro-balanced")
+            s=self.settings(t); s["model"]="haiku"; (t/".claude/settings.json").write_text(json.dumps(s)); install.install(t)
+            s=self.settings(t); self.assertEqual((s["model"],s["effortLevel"],s[install.MARKER]["previous"],s[install.MARKER]["applied"]["model"]),("haiku","high",{"model":"sonnet"},"opus"))
+            install.install(t,"pro-balanced"); self.assertEqual((self.settings(t)["model"],self.settings(t)[install.MARKER]["previous"]),("opus",{"model":"haiku"}))  # explicit --profile: the user's value is the new previous
+            s=self.settings(t); s["model"]="haiku"; (t/".claude/settings.json").write_text(json.dumps(s)); install.install(t); install.uninstall(t); self.assertEqual(self.settings(t),{"model":"haiku","x":1})
+    def test_uninstall_is_transactional_and_leaves_no_residue(self):
+        with tempfile.TemporaryDirectory() as td:
+            t=Path(td).resolve(); install.install(t,"pro-balanced"); dest=t/".claude/plugins/orchestration"; settings=t/".claude/settings.json"; before=settings.read_bytes()
+            stray=t/".claude/plugins/.orchestration-x/previous"; stray.mkdir(parents=True); (stray/"plugin.json").write_text("{}")
+            files=lambda: {p.relative_to(dest):p.read_bytes() for p in dest.rglob("*") if p.is_file()}; plugin=files()
+            def fail_settings(path,data):
+                if path==settings: raise OSError("injected write failure")
+            with mock.patch.object(install,"put",fail_settings), mock.patch.object(install,"swap") as swap: code,out,err=self.cli(str(t),"--uninstall")
+            self.assertEqual((code,out,err),(1,"","error: injected write failure\n")); self.assertEqual((files(),settings.read_bytes()),(plugin,before)); swap.assert_not_called()  # the plugin is parked only after the settings are written
+            install.uninstall(t); self.assertFalse((t/".claude").exists()); self.assertEqual(list(t.iterdir()),[])
+            install.uninstall(t); self.assertEqual(list(t.iterdir()),[])
+    def test_concurrent_runs_refuse_while_the_lock_is_held(self):
+        with tempfile.TemporaryDirectory() as td:
+            t=Path(td).resolve(); mkt=t/"mkt"; locks=lambda: sorted(p.relative_to(t) for p in t.rglob(install.LOCK_FILE))
+            with install.locked(t/".claude"):
+                for action in (lambda: install.install(t,"pro-balanced"),lambda: install.uninstall(t)):
+                    with self.assertRaisesRegex(ValueError,"another install is running"): action()
+                self.assertEqual([p.name for p in (t/".claude").iterdir()],[install.LOCK_FILE])
+            self.assertFalse((t/".claude").exists()); install.install(t,"pro-balanced"); self.assertEqual(locks(),[])
+            with install.locked(mkt):
+                for action in (lambda: install.install_user(mkt,"pro-balanced"),lambda: install.uninstall_user(mkt)):
+                    with self.assertRaisesRegex(ValueError,"another install is running"): action()
+            with install.locked(t/"cfg"):
+                with self.assertRaisesRegex(ValueError,"another install is running"): install.install_user(mkt,"pro-balanced",t/"cfg")
+                self.assertFalse(mkt.exists())
+            self.assertFalse(mkt.exists()); install.install_user(mkt,"pro-balanced",t/"cfg"); self.assertEqual(install.uninstall_user(mkt,t/"cfg"),[]); self.assertEqual(locks(),[])
+            self.assertEqual(sorted(p.name for p in t.iterdir()),[".claude","cfg"])
+            with tempfile.TemporaryDirectory() as rd:  # no .claude: uninstall is a no-op that needs no lock, even on a read-only target
+                ro=Path(rd); ro.chmod(0o555); install.uninstall(ro); self.assertEqual(list(ro.iterdir()),[]); ro.chmod(0o755)
     def test_cli_reports_one_line_errors_and_survives_a_narrow_console(self):
         with tempfile.TemporaryDirectory() as td:
             t=Path(td).resolve(); code,out,err=self.cli(str(t),"--profile","nope")
@@ -288,39 +324,13 @@ class DistributionTests(unittest.TestCase):
                 for action in (lambda: install.install(copy,"pro-balanced"),lambda: install.install(copy/"tests","pro-balanced"),lambda: install.install_user(copy/"build","pro-balanced")):
                     with self.assertRaisesRegex(ValueError,"outside the distribution checkout"): action()
             self.assertEqual(files(),before); self.assertEqual([p for p in before if p.name in (".claude","build")],[])
-    def test_rule_install_migrates_the_legacy_claude_md_block(self):
-        begin,end=install.LEGACY_BEGIN,install.LEGACY_END
-        cases={b"# Mine\r\nnotes\r\n\n"+begin+b"\nold rule\n"+end+b"\nafter\r\n":b"# Mine\r\nnotes\r\nafter\r\n",begin+b"\nold rule\n"+end+b"\n":None}
-        for legacy,expected in cases.items():
-            with self.subTest(legacy=legacy), tempfile.TemporaryDirectory() as td:
-                cfg=Path(td); (cfg/"CLAUDE.md").write_bytes(legacy); install.transaction(install.rule_writes(cfg,True))
-                self.assertEqual((cfg/"CLAUDE.md").read_bytes() if (cfg/"CLAUDE.md").exists() else None,expected); self.assertTrue((cfg/"rules/claude-orchestration.md").exists())
-        for legacy in (b"# Mine\n"+begin+b"\nold\n\nMy notes\n",b"x\n"+end+b"\ny\n"+begin+b"\nz\n",(begin+b"\na\n"+end+b"\n")*2):
-            with self.subTest(malformed=legacy), tempfile.TemporaryDirectory() as td:
-                cfg=Path(td); (cfg/"CLAUDE.md").write_bytes(legacy)
-                with self.assertRaisesRegex(ValueError,"malformed"): install.transaction(install.rule_writes(cfg,True))
-                self.assertEqual((cfg/"CLAUDE.md").read_bytes(),legacy); self.assertFalse((cfg/"rules").exists())
-    def test_legacy_block_written_by_the_old_installer_migrates_back(self):
-        B,E=install.LEGACY_BEGIN.decode(),install.LEGACY_END.decode()
-        def old_with_rule(text,block):  # scripts/install.py at 69973b5 (1.4.1)
-            start,end=text.find(B),text.find(E)
-            if start!=-1 and end!=-1: text=(text[:start].rstrip("\n")+"\n\n"+text[end+len(E):].lstrip("\n")).strip("\n")
-            if block: text=(text+"\n\n" if text else "")+f"{B}\n{block.strip()}\n{E}"
-            return text+"\n" if text else ""
-        for original in ("# Mine\n","# Mine\n\nmore\n",""):
-            once=old_with_rule(original,"rule"); twice=old_with_rule(once,"rule")
-            for legacy in (once,twice):
-                with self.subTest(original=original,legacy=legacy):
-                    self.assertEqual(install.without_legacy_block(legacy.encode(),Path("CLAUDE.md")),original.encode())
     def test_rule_refuses_symlinks_and_files_it_did_not_write(self):
         with tempfile.TemporaryDirectory() as td:
             cfg=Path(td)/"cfg"; (cfg/"rules").mkdir(parents=True); rule=cfg/"rules/claude-orchestration.md"; rule.write_text("mine")
             with self.assertRaisesRegex(ValueError,"not written by this installer"): install.rule_writes(cfg,True)
-            rule.unlink(); real=Path(td)/"real.md"; real.write_bytes(install.LEGACY_BEGIN+b"\nx\n"+install.LEGACY_END+b"\n")
-            try: (cfg/"CLAUDE.md").symlink_to(real)
+            rule.unlink(); real=Path(td)/"real.md"; real.write_bytes(install.RULE_HEADER+b"x\n")
+            try: rule.symlink_to(real)
             except OSError: self.skipTest("symlink unavailable")
-            with self.assertRaisesRegex(ValueError,"symlink"): install.rule_writes(cfg,True)
-            rule.symlink_to(real)
             with self.assertRaisesRegex(ValueError,"symlink"): install.rule_writes(cfg,False)
     def test_rollback_restores_the_plugin_even_if_a_file_restore_fails(self):
         with tempfile.TemporaryDirectory() as td:
@@ -344,13 +354,13 @@ class DistributionTests(unittest.TestCase):
             install.set_rule(t/"cfg",True); umask=os.umask(0); os.umask(umask); self.assertEqual((t/"cfg/rules/claude-orchestration.md").stat().st_mode&0o777,0o666&~umask)
     def test_failed_first_user_install_leaves_nothing(self):
         with tempfile.TemporaryDirectory() as td:
-            t=Path(td).resolve(); mkt=t/"mkt"; cfg=t/"cfg"; cfg.mkdir(); legacy=b"# Mine\n\n"+install.LEGACY_BEGIN+b"\nold\n"+install.LEGACY_END+b"\n"; (cfg/"CLAUDE.md").write_bytes(legacy)
+            t=Path(td).resolve(); mkt=t/"mkt"; cfg=t/"cfg"; cfg.mkdir(); mine=b"# Mine\r\n"; (cfg/"CLAUDE.md").write_bytes(mine)
             real_swap=install.swap
             def fail_into_plugin(src,dst):
                 if Path(dst)==mkt/"plugin": raise OSError("injected")
                 return real_swap(src,dst)
             with mock.patch.object(install,"swap",fail_into_plugin), self.assertRaises(OSError): install.install_user(mkt,"pro-balanced",cfg)
-            self.assertFalse(mkt.exists()); self.assertEqual(sorted(p.name for p in cfg.iterdir()),["CLAUDE.md"]); self.assertEqual((cfg/"CLAUDE.md").read_bytes(),legacy)
+            self.assertFalse(mkt.exists()); self.assertEqual(sorted(p.name for p in cfg.iterdir()),["CLAUDE.md"]); self.assertEqual((cfg/"CLAUDE.md").read_bytes(),mine)
     def test_register_and_status_through_the_claude_cli(self):
         st={"marketplaces":{},"plugins":{},"calls":[]}
         def fake_cli(cmd,**kw):  # the claude CLI's --json behavior for the commands the installer uses
@@ -384,8 +394,8 @@ class DistributionTests(unittest.TestCase):
             self.assertEqual(install.status(claude,t/"none",cfg2)[1:],[(True,"plugin orchestration@snaplyze-orchestration: enabled")])
             reset(); self.assertFalse(install.status(claude,t/"none",cfg2)[-1][0])
             with mock.patch.object(install,"run_cli",lambda cmd,**kw: subprocess.CompletedProcess(cmd,1,"","boom")), self.assertRaisesRegex(ValueError,"failed: boom"): install.register(claude,mkt)
-            (cfg/"CLAUDE.md").write_bytes(install.LEGACY_BEGIN+b"\nx\n"+install.LEGACY_END+b"\n"); (cfg/"rules/claude-orchestration.md").write_bytes(install.RULE_HEADER+b"old\n")
-            self.assertEqual([line.split(": ",1)[-1] for ok,line in install.status(None,mkt,cfg) if not ok],["outdated","still holds the pre-1.5 managed block (rerun with --default-rule)","plugin registration not checked"])
+            (cfg/"rules/claude-orchestration.md").write_bytes(install.RULE_HEADER+b"old\n")
+            self.assertEqual([line.split(": ",1)[-1] for ok,line in install.status(None,mkt,cfg) if not ok],["outdated","plugin registration not checked"])
     def test_symlinks_and_unknown_profile_names_rejected(self):
         with tempfile.TemporaryDirectory() as td:
             t=Path(td)/"project"; ext=Path(td)/"external"; t.mkdir(); ext.mkdir()

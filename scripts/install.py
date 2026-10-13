@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """Safely install/update Claude Orchestration and materialize a selected model/effort profile."""
 from __future__ import annotations
-import argparse, json, os, re, shutil, stat, subprocess, sys, tempfile
+import argparse, contextlib, errno, json, os, re, shutil, stat, subprocess, sys, tempfile
 from pathlib import Path
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
 
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN = ROOT / "plugin"
@@ -13,8 +17,7 @@ PLUGIN_ID = f"orchestration@{LOCAL_MARKETPLACE}"
 RULE_TEMPLATE = Path(__file__).resolve().parent / "default-orchestration-rule.md"
 RULE_FILE = "claude-orchestration.md"
 RULE_HEADER = b"<!-- Managed by claude-orchestration (scripts/install.py): rewritten on install, removed on uninstall. -->\n"
-# Before 1.5 the rule was a block between these lines in the user CLAUDE.md; rule installs and removals take it out.
-LEGACY_BEGIN, LEGACY_END = b"<!-- BEGIN claude-orchestration:managed -->", b"<!-- END claude-orchestration:managed -->"
+LOCK_FILE = ".orchestration.lock"  # held by locked() in the directory a run modifies, so two runs on one target never overlap
 JUNCTION = 0xA0000003  # IO_REPARSE_TAG_MOUNT_POINT
 swap = os.replace  # directory swaps in transaction(); a module attribute so tests can inject failures without patching os
 run_cli = subprocess.run  # the claude CLI call in claude_json(); same reason
@@ -82,6 +85,60 @@ def remove_empty(dirs) -> None:
             pass
 
 
+def lock_file(path: Path) -> int:
+    """Open path and take a non-blocking exclusive lock on it; a lock held elsewhere is a one-line refusal."""
+    while True:
+        fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o666)
+        try:
+            if os.name == "nt":
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                return fd
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            try:
+                if os.path.samestat(os.fstat(fd), os.stat(path)):
+                    return fd
+            except FileNotFoundError:
+                pass
+            os.close(fd)  # the previous holder removed this file on release: lock the one now at path
+        except OSError as e:
+            os.close(fd)
+            if e.errno not in (errno.EWOULDBLOCK, errno.EAGAIN, errno.EACCES):  # EACCES is Windows contention
+                raise
+            raise ValueError(f"another install is running on {path.parent}; wait for it to finish") from None
+
+
+@contextlib.contextmanager
+def locked(directory: Path):
+    """Hold the advisory lock file in directory for one installer run; a second run on the same directory refuses.
+
+    The directory (and missing ancestors) is created for the lock and removed again when it is left empty.
+    """
+    path = directory / LOCK_FILE
+    if is_link(path):
+        raise ValueError(f"refusing symlink: {path}")
+    created = missing_dirs([directory])
+    directory.mkdir(parents=True, exist_ok=True)
+    try:
+        fd = lock_file(path)
+        try:
+            yield
+        finally:
+            if os.name == "nt":  # unlink fails with a sharing violation while another run has the file open: it stays
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                os.close(fd)
+                with contextlib.suppress(OSError):
+                    path.unlink()
+            else:  # unlink first, so a run that opened this file meanwhile sees it replaced and locks the new one
+                try:
+                    path.unlink(missing_ok=True)  # a stale lock file is harmless: the next run locks it in place
+                except OSError:
+                    pass
+                finally:
+                    os.close(fd)
+    finally:
+        remove_empty(dict.fromkeys([directory, *created]))
+
+
 def dump_settings(settings: dict) -> bytes:
     return (json.dumps(settings, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
 
@@ -139,8 +196,7 @@ def materialize_profile(stage: Path, profile: dict) -> None:
 
 def release_settings(settings: dict) -> bool:
     """Remove the marker and give managed keys back their pre-install values, except a key the user changed after
-    install (markers before 1.5 do not record the applied values, so their keys are always restored).
-    Return True if a marker was present."""
+    install (a marker without an `applied` record restores every managed key). Return True if a marker was present."""
     marker = settings.pop(MARKER, None)
     if not isinstance(marker, dict):
         return marker is not None
@@ -155,11 +211,19 @@ def release_settings(settings: dict) -> bool:
     return True
 
 
-def apply_settings(settings: dict, name: str, profile: dict) -> None:
+def apply_settings(settings: dict, name: str, profile: dict, keep_changes: bool = False) -> None:
+    """Merge the profile's settings and record the marker. With keep_changes (a rerun that takes the profile from the
+    marker), a managed key the user changed since the last install keeps the user's value and its recorded `previous`."""
+    fragment, marker = profile["settings"], settings.get(MARKER)
+    applied = marker.get("applied") if keep_changes and isinstance(marker, dict) else None
+    changed = [key for key in fragment if key in applied and settings.get(key) != applied[key]] if isinstance(applied, dict) else []
+    user = {key: settings[key] for key in changed if key in settings}
+    prev = marker.get("previous") if changed else None
+    recorded = {key: prev[key] for key in changed if isinstance(prev, dict) and key in prev}
     release_settings(settings)
-    fragment = profile["settings"]
     previous = {key: settings[key] for key in fragment if key in settings}
-    settings.update(fragment)
+    settings.update({**fragment, **user})
+    previous = {**{key: value for key, value in previous.items() if key not in changed}, **recorded}
     settings[MARKER] = {"profile": name, "managedKeys": sorted(fragment), "previous": previous, "applied": dict(fragment)}
 
 
@@ -175,31 +239,35 @@ def plugin_destination(target: Path) -> Path:
     return path
 
 
-def transaction(writes: dict[Path, bytes | None], dest: Path | None = None, profile: dict | None = None) -> None:
-    """Apply file writes (None removes a file) and, with dest, stage the plugin (with profile) beside dest and swap it in.
+def transaction(writes: dict[Path, bytes | None], dest: Path | None = None, profile: dict | None = None, remove: bool = False) -> None:
+    """Apply file writes (None removes a file) and, with dest, stage the plugin (with profile) beside dest and swap it
+    in, or with remove take dest away (parked beside it until the writes are through). Callers hold locked().
 
     On failure the previous plugin directory is restored, every file gets its previous bytes back, and directories
-    created here are removed again; each restore step runs on its own, and the original error propagates.
+    created here are removed again; each restore step runs on its own, and the original error propagates. After a
+    successful run, work directories left beside dest by crashed runs are removed.
     """
     before = {path: path.read_bytes() if path.exists() else None for path in writes}
     created = missing_dirs([*(path.parent for path in writes), *([dest.parent] if dest else [])])
     work = stage = previous = None
     done = False
     try:
-        if dest:
+        if dest and (dest.exists() or not remove):
             dest.parent.mkdir(parents=True, exist_ok=True)
             work = Path(tempfile.mkdtemp(prefix=".orchestration-", dir=dest.parent))
             stage, previous = work / "stage", work / "previous"
-            shutil.copytree(PLUGIN, stage)
-            if profile:
-                materialize_profile(stage, profile)
+            if not remove:
+                shutil.copytree(PLUGIN, stage)
+                if profile:
+                    materialize_profile(stage, profile)
         for path, data in writes.items():
             if data != before[path]:
                 put(path, data)
-        if dest:
+        if work:
             if dest.exists():
                 swap(dest, previous)
-            swap(stage, dest)
+            if not remove:
+                swap(stage, dest)
         done = True
     except BaseException:
         if previous and previous.exists():
@@ -223,6 +291,9 @@ def transaction(writes: dict[Path, bytes | None], dest: Path | None = None, prof
         else:
             if work:
                 shutil.rmtree(work, ignore_errors=True)
+            if done and dest and dest.parent.is_dir():
+                for stray in dest.parent.glob(".orchestration-*"):
+                    shutil.rmtree(stray, ignore_errors=True)
             if not done:
                 remove_empty(created)
 
@@ -238,46 +309,30 @@ def install(target: Path, profile_name: str | None = None) -> Path:
         raise ValueError("plugin destination is not a directory")
 
     settings_path = target / ".claude/settings.json"
-    settings = load_json(settings_path)
-    if profile_name is None and isinstance(settings.get(MARKER), dict):
-        profile_name = settings[MARKER].get("profile")
-    profile = profile_data(profile_name) if profile_name else None
-    if profile:
-        apply_settings(settings, profile_name, profile)
-    transaction({settings_path: dump_settings(settings)} if profile else {}, dest, profile)
+    with locked(target / ".claude"):
+        settings = load_json(settings_path)
+        refresh = profile_name is None  # the profile comes from the marker: the user's changes to managed keys stay
+        if refresh and isinstance(settings.get(MARKER), dict):
+            profile_name = settings[MARKER].get("profile")
+        profile = profile_data(profile_name) if profile_name else None
+        if profile:
+            apply_settings(settings, profile_name, profile, keep_changes=refresh)
+        transaction({settings_path: dump_settings(settings)} if profile else {}, dest, profile)
     return dest
 
 
 def uninstall(target: Path) -> None:
+    """Remove the plugin and the managed settings; an empty settings file, plugins/ and .claude go with them."""
     target = target.resolve()
     dest = plugin_destination(target)
     settings_path = target / ".claude/settings.json"
-    settings = load_json(settings_path)
-    if dest.exists():
-        shutil.rmtree(dest)
-    if release_settings(settings):
-        atomic_write(settings_path, dump_settings(settings))
-
-
-def without_legacy_block(data: bytes, path: Path) -> bytes | None:
-    """CLAUDE.md bytes without the pre-1.5 managed block and the blank lines set before it; None when there is no block."""
-    lines = data.splitlines(keepends=True)
-    begins = [i for i, line in enumerate(lines) if line.strip() == LEGACY_BEGIN]
-    ends = [i for i, line in enumerate(lines) if line.strip() == LEGACY_END]
-    if not begins and not ends:
-        return None
-    if len(begins) != 1 or len(ends) != 1 or begins[0] > ends[0]:
-        raise ValueError(f"{path}: malformed claude-orchestration:managed markers; remove the old block by hand, then rerun")
-    start, end = begins[0], ends[0] + 1
-    if not b"".join(lines[end:]).strip():  # the block ends the file: drop the blank lines the old installer put before it
-        while start and not lines[start - 1].strip():
-            start -= 1
-        end = len(lines)
-    elif start and not lines[start - 1].strip():
-        start -= 1
-    elif not lines[end].strip():
-        end += 1
-    return b"".join(lines[:start] + lines[end:])
+    if not (target / ".claude").is_dir():
+        return  # nothing to remove, nothing to lock
+    with locked(target / ".claude"):
+        settings = load_json(settings_path)
+        writes = {settings_path: dump_settings(settings) if settings else None} if release_settings(settings) else {}
+        transaction(writes, dest, remove=True)
+        remove_empty([dest.parent])
 
 
 def rule_path(config_dir: Path) -> Path:
@@ -285,19 +340,13 @@ def rule_path(config_dir: Path) -> Path:
 
 
 def rule_writes(config_dir: Path, enable: bool) -> dict[Path, bytes | None]:
-    """File changes that install (enable) or remove the default rule, taking any pre-1.5 block out of CLAUDE.md."""
-    rule, legacy = rule_path(config_dir), config_dir / "CLAUDE.md"
+    """File changes that install (enable) or remove the default rule."""
+    rule = rule_path(config_dir)
     if is_link(rule):
         raise ValueError(f"refusing symlink: {rule}")
     if rule.exists() and not rule.read_bytes().startswith(RULE_HEADER):
         raise ValueError(f"{rule} was not written by this installer; move it away, then rerun")
-    writes = {rule: RULE_HEADER + RULE_TEMPLATE.read_bytes() if enable else None}
-    stripped = without_legacy_block(legacy.read_bytes(), legacy) if legacy.exists() else None
-    if stripped is not None:
-        if is_link(legacy):
-            raise ValueError(f"{legacy} is a symlink holding the old managed block; remove the block by hand, then rerun")
-        writes[legacy] = stripped if stripped.strip() else None
-    return writes
+    return {rule: RULE_HEADER + RULE_TEMPLATE.read_bytes() if enable else None}
 
 
 def marketplace_dir(root: Path) -> Path:
@@ -311,7 +360,7 @@ def marketplace_dir(root: Path) -> Path:
     for path in (root / ".claude-plugin", root / ".claude-plugin/marketplace.json", root / "plugin"):
         if is_link(path):
             raise ValueError(f"refusing symlink in marketplace directory: {path}")
-    if root.exists() and not (root.is_dir() and (not any(root.iterdir()) or built_here(root))):
+    if root.exists() and not (root.is_dir() and (not any(p.name != LOCK_FILE for p in root.iterdir()) or built_here(root))):
         raise ValueError(f"{root} is neither empty nor an {LOCAL_MARKETPLACE} marketplace; pass another --marketplace-dir")
     return root
 
@@ -329,15 +378,17 @@ def install_user(root: Path, profile_name: str, config_dir: Path | None = None) 
     profile = profile_data(profile_name)
     manifest = {"name": LOCAL_MARKETPLACE, "description": f"Local Claude Orchestration build ({profile_name} profile)", "owner": {"name": "local"}, "plugins": [{"name": "orchestration", "source": "./plugin",
                 "description": f"Claude Orchestration with the {profile_name} profile"}]}
-    writes = {root / ".claude-plugin/marketplace.json": (json.dumps(manifest, indent=2) + "\n").encode("utf-8")}
-    if config_dir:
-        writes |= rule_writes(config_dir, True)
-    transaction(writes, root / "plugin", profile)
+    with locked(root), locked(config_dir) if config_dir else contextlib.nullcontext():
+        writes = {root / ".claude-plugin/marketplace.json": (json.dumps(manifest, indent=2) + "\n").encode("utf-8")}
+        if config_dir:
+            writes |= rule_writes(config_dir, True)
+        transaction(writes, root / "plugin", profile)
     return root / "plugin"
 
 
 def set_rule(config_dir: Path, enable: bool) -> None:
-    transaction(rule_writes(config_dir, enable))
+    with locked(config_dir):
+        transaction(rule_writes(config_dir, enable))
 
 
 def uninstall_user(root: Path, config_dir: Path | None = None) -> list[Path]:
@@ -350,13 +401,14 @@ def uninstall_user(root: Path, config_dir: Path | None = None) -> list[Path]:
         set_rule(config_dir, False)
     if not root.exists():
         return []
-    if (root / "plugin").exists():
-        shutil.rmtree(root / "plugin")
-    (root / ".claude-plugin/marketplace.json").unlink(missing_ok=True)
-    for work in root.glob(".orchestration-*"):
-        shutil.rmtree(work, ignore_errors=True)
-    remove_empty([root / ".claude-plugin", root])
-    return sorted(root.iterdir()) if root.exists() else []
+    with locked(root):
+        if (root / "plugin").exists():
+            shutil.rmtree(root / "plugin")
+        (root / ".claude-plugin/marketplace.json").unlink(missing_ok=True)
+        for work in root.glob(".orchestration-*"):
+            shutil.rmtree(work, ignore_errors=True)
+        remove_empty([root / ".claude-plugin"])
+        return sorted(p for p in root.iterdir() if p.name != LOCK_FILE)
 
 
 def claude_json(claude: list[str], *args: str):
@@ -438,17 +490,11 @@ def build_is_current(root: Path, profile_name: str | None) -> bool:
 def status(claude: list[str] | None, root: Path, config_dir: Path) -> list[tuple[bool, str]]:
     """Checks that together make orchestration the default: the rule file, and an enabled orchestration plugin (the
     local build registered at user scope, or one plugin from another marketplace)."""
-    rule, legacy = rule_path(config_dir), config_dir / "CLAUDE.md"
+    rule = rule_path(config_dir)
     data = rule.read_bytes() if rule.is_file() else None
     current = data == RULE_HEADER + RULE_TEMPLATE.read_bytes()
     state = "current" if current else "absent" if data is None else "outdated" if data.startswith(RULE_HEADER) else "not written by this installer"
     checks = [(current, f"rule {rule}: {state}")]
-    if legacy.is_file():
-        try:
-            if without_legacy_block(legacy.read_bytes(), legacy) is not None:
-                checks.append((False, f"{legacy}: still holds the pre-1.5 managed block (rerun with --default-rule)"))
-        except ValueError:
-            checks.append((False, f"{legacy}: damaged pre-1.5 managed markers (remove the block by hand)"))
     local = built_here(root)
     if local:
         profile = build_profile(root)
