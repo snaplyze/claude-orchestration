@@ -8,6 +8,7 @@
 - [ ] `python -m unittest discover -v`
 - [ ] `python scripts/doctor.py`
 - [ ] `sh -n setup.sh`
-- [ ] `claude plugin validate --strict ./plugin` (when Claude Code is available)
-- [ ] `python scripts/runtime_smoke.py --skill --tool-surface` when the plugin, profiles, or installer change (or the `Runtime smoke` check)
+- [ ] `claude plugin validate --strict ./plugin` and `claude plugin validate --strict .` (when Claude Code is available)
+- [ ] `python scripts/runtime_smoke.py --skill --tool-surface --capabilities --agent-path` when the plugin, profiles, or installer change (or the `Runtime smoke` check)
+- [ ] `docs/plan.md` row of the task updated (status, evidence, next step)
 - [ ] `CHANGELOG.md` updated under `Unreleased` for user-visible changes

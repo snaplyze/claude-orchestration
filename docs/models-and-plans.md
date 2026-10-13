@@ -1,6 +1,6 @@
 # Models, effort, and plans
 
-Verified against Anthropic primary documentation on **2026-10-08**.
+Sources and recheck dates are in [research sources](research-sources.md); conclusion 17 there covers the facts below (rechecked 2026-10-13).
 
 ## Current model facts
 

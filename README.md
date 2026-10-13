@@ -84,7 +84,7 @@ Modes: **Economy** keeps small work in the main session, **Normal** (default) de
 ```bash
 python -m unittest discover -v                 # installer, validator, and smoke-evaluation tests
 python scripts/doctor.py                        # manifest, frontmatter, profiles, and doc tables
-claude plugin validate --strict ./plugin
+claude plugin validate --strict ./plugin && claude plugin validate --strict .
 python scripts/runtime_smoke.py --skill --tool-surface --capabilities --agent-path
 python scripts/runtime_smoke.py --roles "" --default-rule
 ```

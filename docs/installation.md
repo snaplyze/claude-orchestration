@@ -1,6 +1,6 @@
 # Installation
 
-Requirements: Python 3.11+ (CI covers 3.11 on Linux and 3.12/3.13 on Linux, macOS, and Windows), an existing target project, and Claude Code for runtime use.
+Requirements: Python 3.11+ (the CI matrix is in [verification](verification.md)), an existing target project, and Claude Code for runtime use.
 
 ```bash
 ./setup.sh /workspace/project --profile pro-balanced
@@ -14,7 +14,7 @@ Run it explicitly:
 claude --plugin-dir .claude/plugins/orchestration
 ```
 
-This explicit loading is deliberate: it is easy to audit and does not silently mutate user-level plugin marketplaces. For distribution through a marketplace, install the same `plugin/` directory using Claude Code's plugin commands.
+A project install writes nothing outside `<project>/.claude`; for an install that applies to every project, see the user-scope section below or the README.
 
 Switch profile by rerunning setup with another `--profile`. Remove managed plugin/settings with:
 
@@ -22,7 +22,7 @@ Switch profile by rerunning setup with another `--profile`. Remove managed plugi
 ./setup.sh /workspace/project --uninstall
 ```
 
-The installer refuses symlinks and Windows junctions at `.claude`, `.claude/plugins`, `.claude/plugins/orchestration`, or `.claude/settings.json` (so writes cannot leave the target or replace a link), accepts only profile names from `profiles/`, stages the new copy next to the destination, and swaps it in with a rename. On ordinary failures it restores the previous plugin directory and the exact previous `settings.json` bytes. It is not a crash-consistent filesystem transaction across power loss or hostile races; a crash can leave a `.claude/plugins/.orchestration-*` work directory. If restoring the previous plugin itself fails, the installer keeps that directory and prints where the previous copy is; otherwise the work directory is safe to delete.
+The installer refuses symlinks and Windows junctions in the destination chain (the list is in [security](security.md), so writes cannot leave the target or replace a link), accepts only profile names from `profiles/`, stages the new copy next to the destination, and swaps it in with a rename. On ordinary failures it restores the previous plugin directory and the exact previous `settings.json` bytes. It is not a crash-consistent filesystem transaction across power loss or hostile races; a crash can leave a `.claude/plugins/.orchestration-*` work directory. If restoring the previous plugin itself fails, the installer keeps that directory and prints where the previous copy is; otherwise the work directory is safe to delete.
 
 ## User scope (all projects) with a profile
 
