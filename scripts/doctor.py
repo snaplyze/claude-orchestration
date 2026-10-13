@@ -10,9 +10,18 @@ MODELS = {"haiku", "sonnet", "opus"}
 ROOT_MODELS = {"sonnet", "opus"}
 EFFORTS = {"low", "medium", "high", "xhigh"}
 RESERVED = ("claude-", "anthropic-", "anthropics-", "cc-plugin-")
+RESERVED_NAMES = {"claude", "anthropic", "anthropics", "claude-code", "claude-mods"}
 PROFILE_COUNT = 8
 MARKETPLACE_PROFILE = "pro-balanced"
 ROLE_ORDER = ("explorer", "researcher", "worker", "tester", "reviewer")
+
+
+def reserved_name(name: str) -> bool:
+    """Whether `claude plugin validate` refuses the name as passing for one of Anthropic's own (research-sources 1):
+    a reserved prefix or exact name, or `official` beside `claude`/`anthropic`; case ignored, a run of separators is one."""
+    words = [w for w in re.split(r"[^a-z0-9]+", name.lower()) if w]
+    joined = "-".join(words)
+    return joined.startswith(RESERVED) or joined in RESERVED_NAMES or any({a, b} == {"official", w} for a, b in zip(words, words[1:]) for w in ("claude", "anthropic"))
 
 
 def pair_errors(where: str, model, effort, models=MODELS) -> list[str]:
@@ -27,13 +36,13 @@ def check(root: Path = R) -> list[str]:
     try:
         name = json.loads((root / "plugin/.claude-plugin/plugin.json").read_text(encoding="utf-8")).get("name", "")
         if name != "orchestration": errors.append("plugin name must be orchestration")
-        if name.startswith(RESERVED): errors.append("plugin uses reserved prefix")
+        if reserved_name(name): errors.append(f"plugin name {name!r} is reserved")
     except Exception as e: errors.append(f"manifest: {e}")
     try:
         market = json.loads((root / ".claude-plugin/marketplace.json").read_text(encoding="utf-8"))
         entries = [(p.get("name"), p.get("source")) for p in market.get("plugins", [])]
         if entries != [("orchestration", "./plugin")]: errors.append(f"marketplace.json must list only orchestration from ./plugin, found {entries}")
-        if not market.get("name") or str(market["name"]).startswith(RESERVED): errors.append("marketplace.json: missing or reserved marketplace name")
+        if not market.get("name") or reserved_name(str(market["name"])): errors.append("marketplace.json: missing or reserved marketplace name")
     except Exception as e: errors.append(f"marketplace: {e}")
 
     shipped, turns, documented = {}, {}, {}

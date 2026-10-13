@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Tests: the checkout-guard tests run against a temporary copy of the checkout; installs run in-process (suite 0.66 → 0.19 s, 3 subprocess calls left); the six doctor invariant checks, the CLI entry point, `runtime_smoke.write_settings` and `cost_of` are covered; fault injection goes through `install.swap`/`install.run_cli` instead of patching `os`/`subprocess`.
+- `doctor.py` refuses the exact reserved plugin names (`claude`, `anthropic`, `anthropics`, `claude-code`, `claude-mods`, and `official` beside `claude`/`anthropic`), case-insensitively, next to the reserved prefixes.
+- Repository: `.claude/settings.json` sets the subagent spawn depth to 1 and denies `.env` reads for sessions started in the checkout; `main` and `v*` tags are protected by rulesets (required checks, no force-push or deletion), SHA-pinned actions are required, merged branches are deleted.
 - Docs: the second 2026-10-13 audit is recorded in `docs/plan.md` (A-24…A-40); upstream issue states, the `tools`/`disallowedTools` wording, the PowerShell-on-Windows and plugin-agent ignored-fields statements, the stale project-install paragraph, duplicated CI-matrix and symlink lists, and the acceptance commands in README, CONTRIBUTING, the PR template and `AGENTS.md` are corrected; 15 external claims rechecked against Anthropic's pages (research-sources 17).
 - Agent rules: `AGENTS.md` keeps only the project facts ("Сведения о проекте": commands, invariants, traps, plan, CI and orchestration lines, owner decisions); the general unified policy v15 block is removed because task prompts carry the general rules. Claude Code ≥ 2.1.277 reads it natively while no `CLAUDE.md` exists.
 

@@ -16,6 +16,8 @@ RULE_HEADER = b"<!-- Managed by claude-orchestration (scripts/install.py): rewri
 # Before 1.5 the rule was a block between these lines in the user CLAUDE.md; rule installs and removals take it out.
 LEGACY_BEGIN, LEGACY_END = b"<!-- BEGIN claude-orchestration:managed -->", b"<!-- END claude-orchestration:managed -->"
 JUNCTION = 0xA0000003  # IO_REPARSE_TAG_MOUNT_POINT
+swap = os.replace  # directory swaps in transaction(); a module attribute so tests can inject failures without patching os
+run_cli = subprocess.run  # the claude CLI call in claude_json(); same reason
 
 
 def load_json(path: Path) -> dict:
@@ -196,15 +198,15 @@ def transaction(writes: dict[Path, bytes | None], dest: Path | None = None, prof
                 put(path, data)
         if dest:
             if dest.exists():
-                os.replace(dest, previous)
-            os.replace(stage, dest)
+                swap(dest, previous)
+            swap(stage, dest)
         done = True
     except BaseException:
         if previous and previous.exists():
             try:
                 if dest.exists():
                     shutil.rmtree(dest)
-                os.replace(previous, dest)
+                swap(previous, dest)
             except OSError as e:
                 print(f"Could not restore the previous plugin: {e}", file=sys.stderr)
         for path, data in before.items():
@@ -359,7 +361,7 @@ def uninstall_user(root: Path, config_dir: Path | None = None) -> list[Path]:
 
 def claude_json(claude: list[str], *args: str):
     """Run `claude plugin <args> --json` and return its parsed result (a listing, or one result line)."""
-    proc = subprocess.run([*claude, "plugin", *args, "--json"], capture_output=True, text=True, timeout=300)
+    proc = run_cli([*claude, "plugin", *args, "--json"], capture_output=True, text=True, timeout=300)
     out = proc.stdout.strip()
     for text in (out, out.splitlines()[-1] if out else ""):
         try:
