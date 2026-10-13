@@ -35,16 +35,17 @@ Requires [Claude Code](https://code.claude.com) (tested on 2.1.295) and, for the
 /plugin install orchestration@snaplyze-orchestration
 ```
 
+To make the roles the default in every repository, also install the rule from a checkout: `python scripts/install.py --default-rule`.
+
 ### User scope with a profile
 
 ```bash
 git clone https://github.com/snaplyze/claude-orchestration.git && cd claude-orchestration
-python scripts/install.py --user --profile max-20x-thorough --default-rule
-claude plugin marketplace add ~/.claude-orchestration
-claude plugin install orchestration@orchestration-local --scope user
+python scripts/install.py --user --profile max-20x-thorough --default-rule --register
+python scripts/install.py --status
 ```
 
-`--user` builds a local marketplace in `~/.claude-orchestration` whose plugin already carries the profile; Claude Code loads it in place. `--default-rule` installs the rule file `~/.claude/rules/claude-orchestration.md`, which makes the plugin's roles the default way to delegate in every repository unless the project's own instructions say otherwise. On Windows use `.\setup.ps1 -User -Profile max-20x-thorough -DefaultRule`.
+`--user` builds a local marketplace in `~/.claude-orchestration` whose plugin already carries the profile; Claude Code loads it in place. `--default-rule` installs the rule file `~/.claude/rules/claude-orchestration.md`, which makes the plugin's roles the default way to delegate in every repository unless the project's own instructions say otherwise. `--register` adds the marketplace and installs the plugin at user scope through the `claude` CLI, and `--status` checks that the rule, the build, and the registration are all in place. On Windows use `.\setup.ps1 -User -Profile max-20x-thorough -DefaultRule -Register`.
 
 ### Project scope
 
@@ -94,9 +95,7 @@ python scripts/runtime_smoke.py --skill --tool-surface --agent-path
 Update a user install with `git pull` and the same `install.py --user …` command, then restart Claude Code sessions. Remove it with:
 
 ```bash
-claude plugin uninstall orchestration@orchestration-local
-claude plugin marketplace remove orchestration-local
-python scripts/install.py --user --uninstall --default-rule
+python scripts/install.py --user --uninstall --default-rule --register
 ```
 
 ## Documentation

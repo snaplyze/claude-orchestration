@@ -45,6 +45,22 @@ class DistributionTests(unittest.TestCase):
             session=[{"hook_event_name":"Stop","effort":{"level":"medium"},"transcript_path":transcript("a","claude-opus-5-5")}]
             self.assertTrue(runtime_smoke.check_agent_session(session,{"model":"opus","effort":"high"},"reviewer")["ok"])
             self.assertFalse(runtime_smoke.check_agent_session(session,{"model":"haiku","effort":"low"},"explorer")["ok"])
+    def test_runtime_smoke_judges_default_rule_runs(self):
+        rule={"hook_event_name":"InstructionsLoaded","file_path":"/x/.claude/rules/claude-orchestration.md"}
+        def run(*types,**inputs): return [rule,*({"hook_event_name":"PreToolUse","tool_name":"Agent","tool_input":{"subagent_type":t,**inputs}} for t in types)]
+        nested={"hook_event_name":"PreToolUse","tool_name":"Agent","agent_id":"a","tool_input":{"subagent_type":"Explore"}}
+        roles,reviewer=frozenset(),frozenset({"orchestration:reviewer"})
+        for events,expect,ok in ((run("orchestration:explorer","orchestration:explorer"),roles,True),(run("orchestration:explorer")+[nested],roles,True),(run("orchestration:explorer","Explore"),roles,False),
+                                 (run(None),roles,False),(run("fork"),roles,False),(run("orchestration:worker",model="sonnet"),roles,False),(run("orchestration:worker",effort="low"),roles,False),
+                                 (run(),roles,False),(run("orchestration:worker"),reviewer,False),(run("orchestration:worker","orchestration:reviewer"),reviewer,True),
+                                 (run(),None,True),(run("orchestration:explorer"),None,False),(run()[1:],None,False)):
+            with self.subTest(events=events,expect=expect): self.assertEqual(runtime_smoke.rule_run(events,expect)[0],ok)
+        self.assertEqual([runtime_smoke.check_rule_case("c",[(True,"")]*a+[(False,"")]*(3-a),roles)["ok"] for a in range(4)],[False,False,True,True])
+        self.assertEqual([runtime_smoke.check_rule_case("c",[(True,"")]*a+[(False,"")]*(3-a),None)["ok"] for a in range(4)],[False,False,False,True])
+        self.assertFalse(runtime_smoke.check_rule_case("c",[],None)["ok"])
+        with tempfile.TemporaryDirectory() as td:
+            runtime_smoke.write_fixture(Path(td)); r=subprocess.run([sys.executable,"-I","-c","import sys;sys.path.insert(0,'.');from orders import api as o;from billing import api as b;from notify import api as n;print(o.create_order({})['table'],b.invoice({})['vat_rate'],n.send({})['max_retries'])"],cwd=td,capture_output=True,text=True)
+            self.assertEqual(r.stdout.split(),runtime_smoke.ANSWERS["map"]); self.assertGreater(sum(len(f.read_text().splitlines()) for f in Path(td).rglob("*.py")),3000)
     def test_runtime_smoke_forgets_only_its_own_sessions(self):
         with tempfile.TemporaryDirectory() as td:
             cfg=Path(td)/"cfg"; work=cfg/"projects/-tmp-smoke-roles"; (work/"s1/subagents").mkdir(parents=True)
@@ -177,6 +193,33 @@ class DistributionTests(unittest.TestCase):
                 return real_replace(src,dst)
             with mock.patch.object(install.os,"replace",fail_into_plugin), self.assertRaises(OSError): install.install_user(mkt,"pro-balanced",cfg)
             self.assertFalse(mkt.exists()); self.assertEqual(sorted(p.name for p in cfg.iterdir()),["CLAUDE.md"]); self.assertEqual((cfg/"CLAUDE.md").read_bytes(),legacy)
+    def test_register_and_status_through_the_claude_cli(self):
+        stub=("import json,os,sys\nfrom pathlib import Path\nf=Path(os.environ['STUB_STATE']);st=json.loads(f.read_text())\na=[x for x in sys.argv[1:] if x!='--json'];st['calls'].append(' '.join(a[1:3]) if a[1]=='marketplace' else a[1])\n"
+              "m,p=st['marketplaces'],st['plugins'];r={'outcome':'ok'}\nif a[1:3]==['marketplace','list']:r=[{'name':k,'path':v} for k,v in m.items()]\n"
+              "elif a[1:3]==['marketplace','add']:m[json.loads((Path(a[3])/'.claude-plugin/marketplace.json').read_text())['name']]=a[3]\n"
+              "elif a[1:3]==['marketplace','remove']:m.pop(a[3])\nelif a[1]=='list':r=[{'id':k,'scope':'user',**v} for k,v in p.items()]\n"
+              "elif a[1]=='install':p[a[2]]={'enabled':True,'readFromFolder':str(Path(m[a[2].split('@')[1]])/'plugin')}\nelif a[1]=='enable':p[a[2]]['enabled']=True\n"
+              "elif a[1]=='uninstall':p.pop(a[2])\nf.write_text(json.dumps(st));print(json.dumps(r))\n")
+        with tempfile.TemporaryDirectory() as td:
+            t=Path(td).resolve(); state=t/"state.json"; (t/"claude.py").write_text(stub); claude=[sys.executable,str(t/"claude.py")]; mkt=t/"mkt"; cfg=t/"cfg"
+            def reset(**plugins): state.write_text(json.dumps({"marketplaces":{},"plugins":plugins,"calls":[]}))
+            def calls(): return json.loads(state.read_text())["calls"]
+            with mock.patch.dict(os.environ,{"STUB_STATE":str(state)}):
+                reset(); install.install_user(mkt,"team-premium",cfg)
+                self.assertEqual([ok for ok,_ in install.status(claude,mkt,cfg)],[True,True,False])
+                install.register(claude,mkt); install.register(claude,mkt)
+                self.assertEqual([c for c in calls() if c not in ("marketplace list","list")],["marketplace add","install"])
+                checks=install.status(claude,mkt,cfg); self.assertTrue(all(ok for ok,_ in checks),checks); self.assertIn("profile team-premium",checks[1][1])
+                p=json.loads(state.read_text()); p["plugins"][install.PLUGIN_ID]["enabled"]=False; state.write_text(json.dumps(p)); install.register(claude,mkt); self.assertEqual(calls()[-3],"enable")
+                install.unregister(claude,mkt); p=json.loads(state.read_text()); self.assertEqual((p["marketplaces"],p["plugins"]),({},{}))
+                reset(**{"orchestration@snaplyze-orchestration":{"enabled":True}})
+                with self.assertRaisesRegex(ValueError,"also registers"): install.register(claude,mkt)
+                self.assertIn("conflict: orchestration@snaplyze-orchestration is also enabled",[line for _,line in install.status(claude,mkt,cfg)])
+                state.write_text(json.dumps({"marketplaces":{"orchestration-local":str(t/"elsewhere")},"plugins":{},"calls":[]}))
+                with self.assertRaisesRegex(ValueError,"already registered from"): install.register(claude,mkt)
+                self.assertEqual([c for c in calls() if c not in ("marketplace list","list")],[])
+            (cfg/"CLAUDE.md").write_bytes(install.LEGACY_BEGIN+b"\nx\n"+install.LEGACY_END+b"\n"); (cfg/"rules/claude-orchestration.md").write_bytes(install.RULE_HEADER+b"old\n")
+            self.assertEqual([line.split(": ",1)[-1] for ok,line in install.status(None,mkt,cfg) if not ok],["outdated","still holds the pre-1.5 managed block (rerun with --default-rule)","registration not checked"])
     def test_symlinks_and_unknown_profile_names_rejected(self):
         with tempfile.TemporaryDirectory() as td:
             t=Path(td)/"project"; ext=Path(td)/"external"; t.mkdir(); ext.mkdir(); (t/".claude").mkdir()

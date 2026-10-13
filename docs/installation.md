@@ -31,14 +31,13 @@ every project, build a local marketplace whose plugin already carries the
 profile and install it at user scope:
 
 ```bash
-python scripts/install.py --user --profile max-20x-thorough --default-rule
-claude plugin marketplace add ~/.claude-orchestration
-claude plugin install orchestration@orchestration-local --scope user
+python scripts/install.py --user --profile max-20x-thorough --default-rule --register
+python scripts/install.py --status
 ```
 
-On Windows the first step is `.\setup.ps1 -User -Profile max-20x-thorough -DefaultRule`
-(`-MarketplaceDir` overrides the directory); `./setup.sh --user …` works the same
-on macOS and Linux.
+On Windows run `.\setup.ps1 -User -Profile max-20x-thorough -DefaultRule -Register`
+and `.\setup.ps1 -Status` (`-MarketplaceDir` overrides the directory);
+`./setup.sh --user …` works the same on macOS and Linux.
 
 - `--user` writes `~/.claude-orchestration` (`--marketplace-dir` to change it):
   `.claude-plugin/marketplace.json` (marketplace `orchestration-local`) and the
@@ -60,17 +59,27 @@ on macOS and Linux.
   in the user `CLAUDE.md`; installing or removing the rule takes that block out
   and leaves the rest of the file byte for byte, or refuses without writing if
   the markers are damaged.
+- `--register` runs `claude plugin marketplace add` and
+  `claude plugin install orchestration@orchestration-local --scope user`
+  (or `enable`) only when needed, so a rerun changes nothing, and then checks
+  that the plugin is enabled and loads from the marketplace `plugin/`. It
+  refuses when `orchestration-local` is already registered from another
+  directory or another enabled plugin is named `orchestration` (for example
+  `orchestration@snaplyze-orchestration`): both register the same plugin.
+  Without `--register`, run those two commands yourself.
+- `--status` prints one line per requirement, OK or TODO: the rule file is
+  current, no pre-1.5 block is left in `CLAUDE.md`, the build matches this
+  checkout's version, and the plugin is enabled from it with no conflict. It
+  exits 1 while anything is TODO.
+- `--default-rule` alone (no `--user`) installs or, with `--uninstall`, removes
+  only the rule, for example next to the GitHub marketplace plugin.
 - Root `model`/`effortLevel` are not written in user mode: the skill and each
   role carry their own, and your global defaults stay yours.
-- Do not install `orchestration@snaplyze-orchestration` at the same time; both
-  register the `orchestration` plugin.
 
 Remove:
 
 ```bash
-claude plugin uninstall orchestration@orchestration-local
-claude plugin marketplace remove orchestration-local
-python scripts/install.py --user --uninstall --default-rule
+python scripts/install.py --user --uninstall --default-rule --register
 ```
 
 Verify the installed copy with

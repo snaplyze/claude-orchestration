@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Installer `--user`: the marketplace directory must be new, empty, or built by the installer, and uninstall deletes only what it built (before, `--marketplace-dir` pointing at an existing directory could lose its `plugin/` on install or the whole directory on uninstall); symlink and Windows junction checks now run before path resolution; a failed first install leaves nothing behind.
+- Installer `--register` adds the local marketplace and installs/enables the plugin at user scope through the `claude` CLI, idempotently, refusing a conflicting `orchestration` plugin; `--status` reports rule, build, registration, and conflicts (exit 1 while incomplete); `--default-rule` works alone, for example next to the GitHub marketplace plugin. Errors print one line instead of a traceback. `setup.ps1` gains `-Register` and `-Status`.
 - `--default-rule` writes the rule as its own file, `rules/claude-orchestration.md` in the Claude config directory (user rules apply to every project), instead of a marked block in the user `CLAUDE.md`; the old block is migrated out byte-exactly, and damaged markers are refused without writing.
 
 ## 1.4.1 — 2026-10-09

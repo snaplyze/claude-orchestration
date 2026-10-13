@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Safely install/update Claude Orchestration and materialize a selected model/effort profile."""
 from __future__ import annotations
-import argparse, json, os, shutil, sys, tempfile
+import argparse, json, os, re, shutil, subprocess, sys, tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -9,6 +9,7 @@ PLUGIN = ROOT / "plugin"
 PROFILES = ROOT / "profiles"
 MARKER = "claude-orchestration"
 LOCAL_MARKETPLACE = "orchestration-local"
+PLUGIN_ID = f"orchestration@{LOCAL_MARKETPLACE}"
 RULE_TEMPLATE = Path(__file__).resolve().parent / "default-orchestration-rule.md"
 RULE_FILE = "claude-orchestration.md"
 RULE_HEADER = b"<!-- Managed by claude-orchestration (scripts/install.py): rewritten on install, removed on uninstall. -->\n"
@@ -303,6 +304,12 @@ def install_user(root: Path, profile_name: str, config_dir: Path | None = None) 
     return root / "plugin"
 
 
+def set_rule(config_dir: Path, enable: bool) -> None:
+    transaction(rule_writes(config_dir, enable))
+    if not enable:
+        remove_empty([rule_path(config_dir).parent])
+
+
 def uninstall_user(root: Path, config_dir: Path | None = None) -> list[Path]:
     """Remove what install_user built (the directory too once empty) and, with config_dir, the default rule.
 
@@ -310,8 +317,7 @@ def uninstall_user(root: Path, config_dir: Path | None = None) -> list[Path]:
     """
     root = marketplace_dir(root)
     if config_dir:
-        transaction(rule_writes(config_dir, False))
-        remove_empty([rule_path(config_dir).parent])
+        set_rule(config_dir, False)
     if not root.exists():
         return []
     if (root / "plugin").exists():
@@ -323,42 +329,161 @@ def uninstall_user(root: Path, config_dir: Path | None = None) -> list[Path]:
     return sorted(root.iterdir()) if root.exists() else []
 
 
+def claude_json(claude: list[str], *args: str):
+    """Run `claude plugin <args> --json` and return its parsed result (a listing, or one result line)."""
+    proc = subprocess.run([*claude, "plugin", *args, "--json"], capture_output=True, text=True, timeout=300)
+    out = proc.stdout.strip()
+    for text in (out, out.splitlines()[-1] if out else ""):
+        try:
+            result = json.loads(text)
+            break
+        except ValueError:
+            continue
+    else:
+        result = None
+    if proc.returncode or result is None or (isinstance(result, dict) and result.get("outcome", "ok") != "ok"):
+        detail = result.get("message") if isinstance(result, dict) else (proc.stderr or proc.stdout).strip()
+        raise ValueError(f"claude plugin {' '.join(args)} failed: {detail}")
+    return result
+
+
+def registration(claude: list[str], root: Path) -> tuple[dict | None, dict | None, list[str]]:
+    """Our marketplace declaration, our user-scope plugin entry, and other enabled plugins named orchestration."""
+    marketplace = next((m for m in claude_json(claude, "marketplace", "list") if m.get("name") == LOCAL_MARKETPLACE), None)
+    plugins = claude_json(claude, "list")
+    plugin = next((p for p in plugins if p.get("id") == PLUGIN_ID and p.get("scope") == "user"), None)
+    others = sorted({p["id"] for p in plugins if str(p.get("id")).startswith("orchestration@") and p["id"] != PLUGIN_ID and p.get("enabled")})
+    return marketplace, plugin, others
+
+
+def loads_from(plugin: dict | None, root: Path) -> bool:
+    return bool(plugin and plugin.get("enabled") and plugin.get("readFromFolder") and Path(plugin["readFromFolder"]).resolve() == root / "plugin")
+
+
+def register(claude: list[str], root: Path) -> None:
+    """Add the local marketplace and install/enable its plugin at user scope with the claude CLI; a rerun changes nothing."""
+    marketplace, plugin, others = registration(claude, root)
+    if others:
+        raise ValueError(f"{', '.join(others)} also registers the orchestration plugin; uninstall it first (claude plugin uninstall <id>)")
+    if marketplace and Path(marketplace.get("path", "")).resolve() != root:
+        raise ValueError(f"{LOCAL_MARKETPLACE} is already registered from {marketplace.get('path')}; pass that --marketplace-dir or unregister it first")
+    if not marketplace:
+        claude_json(claude, "marketplace", "add", str(root), "--scope", "user")
+    if plugin is None:
+        claude_json(claude, "install", PLUGIN_ID, "--scope", "user")
+    elif not plugin.get("enabled"):
+        claude_json(claude, "enable", PLUGIN_ID, "--scope", "user")
+    if not loads_from(registration(claude, root)[1], root):
+        raise ValueError(f"{PLUGIN_ID} is not enabled from {root / 'plugin'} after registration; check `claude plugin list`")
+
+
+def unregister(claude: list[str], root: Path) -> None:
+    marketplace, plugin, _ = registration(claude, root)
+    if plugin:
+        claude_json(claude, "uninstall", PLUGIN_ID, "--scope", "user")
+    if marketplace and Path(marketplace.get("path", "")).resolve() == root:
+        claude_json(claude, "marketplace", "remove", LOCAL_MARKETPLACE, "--scope", "user")
+
+
+def status(claude: list[str] | None, root: Path, config_dir: Path) -> list[tuple[bool, str]]:
+    """Checks that together make orchestration the default: rule file, marketplace build, user-scope registration."""
+    rule, legacy = rule_path(config_dir), config_dir / "CLAUDE.md"
+    data = rule.read_bytes() if rule.is_file() else None
+    current = data == RULE_HEADER + RULE_TEMPLATE.read_bytes()
+    state = "current" if current else "absent" if data is None else "outdated" if data.startswith(RULE_HEADER) else "not written by this installer"
+    checks = [(current, f"rule {rule}: {state}")]
+    if legacy.is_file() and LEGACY_BEGIN in legacy.read_bytes():
+        checks.append((False, f"{legacy}: still holds the pre-1.5 managed block (rerun with --default-rule)"))
+    if built_here(root):
+        manifest = json.loads((root / ".claude-plugin/marketplace.json").read_text(encoding="utf-8"))
+        profile = (re.search(r"\((\S+) profile\)", str(manifest.get("description"))) or [None, "?"])[1]
+        version, shipped = (load_json(d / ".claude-plugin/plugin.json").get("version") for d in (root / "plugin", PLUGIN))
+        checks.append((version == shipped, f"marketplace {root}: profile {profile}, plugin {version}" + ("" if version == shipped else f" (this checkout has {shipped})")))
+    else:
+        checks.append((False, f"marketplace {root}: not built"))
+    if claude is None:
+        return checks + [(False, "claude CLI not found: registration not checked")]
+    marketplace, plugin, others = registration(claude, root)
+    where = plugin and (plugin.get("readFromFolder") or plugin.get("installPath"))
+    checks.append((loads_from(plugin, root), f"plugin {PLUGIN_ID}: " + ("not installed at user scope" if plugin is None else f"{'enabled' if plugin.get('enabled') else 'disabled'}, loads from {where}")))
+    checks += [(False, f"conflict: {other} is also enabled") for other in others]
+    return checks
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("target", type=Path, nargs="?", help="project directory (omit with --user)")
+    for stream in (sys.stdout, sys.stderr):
+        stream.reconfigure(errors="backslashreplace")
+    parser = argparse.ArgumentParser(description="Install Claude Orchestration into a project, or at user scope through a local marketplace.")
+    parser.add_argument("target", type=Path, nargs="?", help="project directory (omit with --user, --default-rule alone, or --status)")
     parser.add_argument("--profile")
     parser.add_argument("--uninstall", action="store_true")
     parser.add_argument("--user", action="store_true", help="build a local marketplace for a user-scope install instead of a project install")
     parser.add_argument("--marketplace-dir", type=Path, default=Path("~/.claude-orchestration"), help="local marketplace directory for --user")
-    parser.add_argument("--default-rule", action="store_true", help=f"with --user: also install (or remove) the default-orchestration rule as rules/{RULE_FILE} in the Claude config directory")
+    parser.add_argument("--default-rule", action="store_true", help=f"install (with --uninstall: remove) the default-orchestration rule, rules/{RULE_FILE} in the Claude config directory; alone or with --user")
+    parser.add_argument("--register", action="store_true", help="with --user: add the marketplace and install/enable the plugin at user scope through the claude CLI (with --uninstall: remove both)")
+    parser.add_argument("--status", action="store_true", help="report whether orchestration is the default for this user: rule, marketplace build, registration, conflicts")
+    parser.add_argument("--claude", default="claude", help="claude executable for --register and --status")
     args = parser.parse_args()
-    config_dir = Path(os.environ.get("CLAUDE_CONFIG_DIR") or "~/.claude").expanduser() if args.default_rule else None
+    try:
+        sys.exit(run(args, parser))
+    except (ValueError, OSError, subprocess.SubprocessError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    config_dir = Path(os.environ.get("CLAUDE_CONFIG_DIR") or "~/.claude").expanduser()
+    claude = [args.claude]
+    if args.status:
+        if args.target or args.profile or args.uninstall or args.register:
+            parser.error("--status runs alone")
+        checks = status(claude if shutil.which(args.claude) else None, marketplace_dir(args.marketplace_dir), config_dir)
+        print("\n".join(("OK    " if ok else "TODO  ") + line for ok, line in checks))
+        return 0 if all(ok for ok, _ in checks) else 1
+    if args.register and not args.user:
+        parser.error("--register needs --user")
     if args.user:
         if args.target:
             parser.error("--user takes no target directory")
+        rule_dir = config_dir if args.default_rule else None
         if args.uninstall:
-            left = uninstall_user(args.marketplace_dir, config_dir)
-            print(f"Removed the local marketplace build" + (f" and {rule_path(config_dir)}" if config_dir else ""))
+            root = marketplace_dir(args.marketplace_dir)
+            if args.register:
+                unregister(claude, root)
+            left = uninstall_user(root, rule_dir)
+            print("Removed the local marketplace build" + (f" and {rule_path(config_dir)}" if rule_dir else "") + (f"; unregistered {PLUGIN_ID}" if args.register else ""))
             if left:
-                print(f"Kept {args.marketplace_dir.expanduser()}: it also holds {', '.join(p.name for p in left)}")
-            print(f"Also run: claude plugin uninstall orchestration@{LOCAL_MARKETPLACE} && claude plugin marketplace remove {LOCAL_MARKETPLACE}")
-            return
+                print(f"Kept {root}: it also holds {', '.join(p.name for p in left)}")
+            if not args.register:
+                print(f"Also run: claude plugin uninstall {PLUGIN_ID} && claude plugin marketplace remove {LOCAL_MARKETPLACE}")
+            return 0
         if not args.profile:
             parser.error("--user needs --profile")
-        dest = install_user(args.marketplace_dir, args.profile, config_dir)
-        print(f"Built local marketplace {LOCAL_MARKETPLACE} with plugin at {dest}" + (f"; default rule in {rule_path(config_dir)}" if config_dir else ""))
-        print(f"First time: claude plugin marketplace add {dest.parent} && claude plugin install orchestration@{LOCAL_MARKETPLACE} --scope user")
-        print("Later runs update the plugin in place; restart Claude Code sessions to pick it up.")
-        return
-    if args.target is None or args.default_rule:
-        parser.error("a project install needs a target directory; --default-rule needs --user")
+        dest = install_user(args.marketplace_dir, args.profile, rule_dir)
+        print(f"Built local marketplace {LOCAL_MARKETPLACE} with plugin at {dest}" + (f"; default rule in {rule_path(config_dir)}" if rule_dir else ""))
+        if args.register:
+            register(claude, dest.parent)
+            print(f"Registered {PLUGIN_ID} at user scope; it loads in place, so restart Claude Code sessions to pick it up.")
+        else:
+            print(f"First time: claude plugin marketplace add {dest.parent} && claude plugin install {PLUGIN_ID} --scope user (or rerun with --register)")
+            print("Later runs update the plugin in place; restart Claude Code sessions to pick it up.")
+        return 0
+    if args.target is None:
+        if not args.default_rule:
+            parser.error("a project install needs a target directory (or use --user, --default-rule, or --status)")
+        set_rule(config_dir, not args.uninstall)
+        print(("Removed " if args.uninstall else "Installed ") + str(rule_path(config_dir)))
+        return 0
+    if args.default_rule:
+        parser.error("--default-rule is a user-level option: run it alone or with --user")
     if args.uninstall:
         uninstall(args.target)
         print("Uninstalled orchestration plugin")
-        return
+        return 0
     dest = install(args.target, args.profile)
     print(f"Installed plugin at {dest}")
     print(f"Launch: claude --plugin-dir {dest}")
+    return 0
 
 
 if __name__ == "__main__":

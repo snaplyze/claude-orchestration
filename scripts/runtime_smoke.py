@@ -15,6 +15,28 @@ READ_ONLY = ("explorer", "researcher")  # no write tools in frontmatter
 NO_WRITE_BY_INSTRUCTION = ("reviewer",)  # keeps Bash; its no-write rule is behavioral
 WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit", "Bash"}
 HOOK = "import sys\nwith open(sys.argv[1], 'a', encoding='utf-8') as f:\n    f.write(sys.stdin.read().strip() + '\\n')\n"
+HOOK_EVENTS = ("PreToolUse", "SubagentStop", "Stop", "InstructionsLoaded")
+RULE = Path(__file__).resolve().parent / "default-orchestration-rule.md"
+RULE_FILE = "claude-orchestration.md"  # name of the installed rule file, also used for the bundled copy
+# --default-rule: an unfamiliar codebase where each subsystem's value is reached through a five-module call chain,
+# next to retired legacy modules holding a decoy value. (subsystem, entry function, constant, value, decoy)
+FLOWS = (("orders", "create_order", "TABLE", '"orders_v2"', '"orders_v1"'),
+         ("billing", "invoice", "VAT_RATE", "0.19", "0.16"),
+         ("notify", "send", "MAX_RETRIES", "13", "5"))
+STEPS = ("api", "service", "rules", "adapter", "config")
+MAP_TASK = ("I am new to this repository. Answer three independent questions and cite the files on each path; the legacy "
+            "modules are not on these paths. (1) Starting at orders/api.py create_order, which TABLE value is used? "
+            "(2) Starting at billing/api.py invoice, which VAT_RATE applies? (3) Starting at notify/api.py send, what is MAX_RETRIES?")
+LOOKUP_TASK = "What is VAT_RATE in billing/config.py? Reply with the number only."
+CHANGE_TASK = ("Add an optional currency argument, default \"EUR\", that billing/api.py invoice passes along its whole call chain so "
+               "that the dict returned at the end contains it; add a test under tests/ and run it. Report when it is done.")
+RESEARCH_TASK = ("Before we add an HTTP client dependency: from the projects' official sources, compare the current stable releases of "
+                 "httpx and requests, their supported Python versions, and their maintenance status, and recommend one for Python 3.11+.")
+NO_SUBAGENTS = "# Project rules\n\nDo all work in the main session. Do not use subagents or the Agent tool in this repository.\n"
+# (name, task, project CLAUDE.md, expected): None = no Agent call; otherwise only orchestration roles, including these.
+RULE_CASES = (("map", MAP_TASK, None, frozenset()), ("lookup", LOOKUP_TASK, None, None), ("project forbids", MAP_TASK, NO_SUBAGENTS, None),
+              ("change", CHANGE_TASK, None, frozenset({"orchestration:reviewer"})), ("research", RESEARCH_TASK, None, frozenset({"orchestration:researcher"})))
+ANSWERS = {"map": [value.strip('"') for *_, value, _ in FLOWS], "lookup": ["0.19"], "project forbids": [value.strip('"') for *_, value, _ in FLOWS]}
 
 
 def transcript_models(path: str) -> list[str]:
@@ -106,13 +128,69 @@ def forget_sessions(events: list[dict]) -> int:
     return removed
 
 
-def write_settings(work: Path) -> Path:
+def write_settings(work: Path, extra: dict | None = None) -> Path:
     log, hook = work / "hooks.jsonl", work / "hook.py"
     hook.write_text(HOOK, encoding="utf-8")
     command = [{"type": "command", "command": f'"{sys.executable}" "{hook}" "{log}"'}]
     settings = work / "settings.json"
-    settings.write_text(json.dumps({"hooks": {event: [{"hooks": command}] for event in ("PreToolUse", "SubagentStop", "Stop")}}), encoding="utf-8")
+    settings.write_text(json.dumps({**(extra or {}), "hooks": {event: [{"hooks": command}] for event in HOOK_EVENTS}}), encoding="utf-8")
     return settings
+
+
+def helpers(sub: str, part: int, count: int) -> list[str]:
+    lines = []
+    for k in range(count):
+        lines += [f"def {sub}_helper_{part}_{k}(items, factor={k + 1}):", f'    """Scale the {sub} items that are not multiples of {k + 2}."""',
+                  f"    return [x * factor for x in items if x % {k + 2}]", "", ""]
+    return lines
+
+
+def write_fixture(root: Path) -> None:
+    """About 4,000 lines in 72 modules: per subsystem, the call chain hides among helper functions and modules."""
+    for sub, entry, const, value, decoy in FLOWS:
+        pkg = root / sub
+        pkg.mkdir(parents=True)
+        (pkg / "__init__.py").write_text("", encoding="utf-8")
+        for i, step in enumerate(STEPS):
+            name = entry if i == 0 else f"{step}_{sub}"
+            if i + 1 < len(STEPS):
+                nxt = STEPS[i + 1]
+                head, call = [f"from {sub} import {nxt}", "", ""], f"    return {nxt}.{nxt}_{sub}(dict(payload, step={step!r}))"
+            else:
+                head, call = [f"{const} = {value}", "", ""], f"    return dict(payload, {const.lower()}={const})"
+            body = head + helpers(sub, 100 + i, 3) + [f"def {name}(payload):", call, "", ""] + helpers(sub, 200 + i, 3)
+            (pkg / f"{step}.py").write_text("\n".join(body).rstrip() + "\n", encoding="utf-8")
+        for i in range(14):
+            (pkg / f"util_{i}.py").write_text("\n".join(helpers(sub, i, 20)).rstrip() + "\n", encoding="utf-8")
+        for i in range(4):
+            (pkg / f"legacy_{i}.py").write_text(f"{const} = {decoy}  # retired\n\n\ndef config_{sub}_v{i}(payload):\n    return dict(payload, {const.lower()}={const})\n", encoding="utf-8")
+
+
+def agent_calls(events: list[dict]) -> list[dict]:
+    """Agent tool inputs issued by the main session (calls made inside a subagent carry agent_id)."""
+    return [e.get("tool_input") or {} for e in events if e.get("hook_event_name") == "PreToolUse" and e.get("tool_name") == "Agent" and "agent_id" not in e]
+
+
+def rule_run(events: list[dict], expect: frozenset | None) -> tuple[bool, str]:
+    """Judge one --default-rule run. The rule must be loaded; then, with expect None, no Agent call at all; otherwise
+    only orchestration roles, including every role in expect, dispatched without model/effort overrides."""
+    if not any(Path(e.get("file_path", "")).name == RULE_FILE for e in events if e.get("hook_event_name") == "InstructionsLoaded"):
+        return False, "rule not loaded"
+    calls = agent_calls(events)
+    types = [c.get("subagent_type") or "general-purpose" for c in calls]
+    roles = [c for c, t in zip(calls, types) if t.startswith("orchestration:")]
+    overrides = sorted({k for c in roles for k in ("model", "effort") if c.get(k)})
+    ok = not calls if expect is None else len(roles) == len(calls) > 0 and expect <= set(types) and not overrides
+    return ok, (",".join(t.removeprefix("orchestration:") for t in types) or "no Agent call") + (f" (overrides {','.join(overrides)})" if overrides else "")
+
+
+def check_rule_case(name: str, runs: list[tuple[bool, str]], expect: frozenset | None) -> dict:
+    """A case passes when at least 2/3 of its runs follow the rule (delegating is a model decision), or every run
+    when the rule says not to delegate."""
+    passed = sum(ok for ok, _ in runs)
+    ok = bool(runs) and (passed == len(runs) if expect is None else 3 * passed >= 2 * len(runs))
+    want = "no Agent call" if expect is None else "roles only" + "".join(f" +{r.removeprefix('orchestration:')}" for r in sorted(expect))
+    return {"name": f"default rule: {name}", "want": want, "seen": f"{passed}/{len(runs)} [" + " | ".join(seen for _, seen in runs) + "]", "ok": ok}
 
 
 def settle(transcript: Path, timeout: float = 15) -> None:
@@ -170,15 +248,21 @@ def run_interactive(claude: str, steps: list[tuple[str, object]], plugin_dir: Pa
     return snapshots
 
 
-def run_claude(claude: str, prompt: str, plugin_dir: Path | None, work: Path, budget: float, model: str | None, extra: tuple = ()) -> float:
-    args = [claude, "-p", prompt, *(["--plugin-dir", str(plugin_dir)] if plugin_dir else []), "--settings", str(write_settings(work)), "--output-format", "json", "--max-budget-usd", str(budget)]
+def run_claude(claude: str, prompt: str, plugin_dir: Path | None, work: Path, budget: float, model: str | None, extra: tuple = (),
+               settings: dict | None = None, env: dict | None = None, cwd: Path | None = None) -> dict:
+    """Run one headless session (hooks log to work/, cwd defaults to work) and return its JSON result."""
+    args = [claude, "-p", prompt, *(["--plugin-dir", str(plugin_dir)] if plugin_dir else []), "--settings", str(write_settings(work, settings)), "--output-format", "json", "--max-budget-usd", str(budget)]
     if model:
         args += ["--model", model]
     args += list(extra)
-    proc = subprocess.run(args, cwd=work, capture_output=True, text=True, timeout=900)
+    proc = subprocess.run(args, cwd=cwd or work, capture_output=True, text=True, timeout=900, env={**os.environ, **(env or {})})
     if proc.returncode != 0:
         raise RuntimeError(f"claude exited {proc.returncode}: {proc.stderr.strip() or proc.stdout.strip()}")
-    return float(json.loads(proc.stdout).get("total_cost_usd") or 0)
+    return json.loads(proc.stdout)
+
+
+def cost_of(out: dict) -> float:
+    return float(out.get("total_cost_usd") or 0)
 
 
 def main() -> int:
@@ -190,6 +274,10 @@ def main() -> int:
     parser.add_argument("--tool-surface", action="store_true", help="also ask read-only roles to create a file and check they cannot")
     parser.add_argument("--agent-path", action="store_true", help="also start each role as the session agent (claude --agent) and check its model/effort")
     parser.add_argument("--interactive", action="store_true", help="also repeat the role and skill checks in an interactive session driven through tmux (run from a trusted folder; cost is not reported)")
+    parser.add_argument("--default-rule", action="store_true", help="also check that the default-orchestration rule makes a session delegate to the roles in an unfamiliar repository, and not for a one-file lookup or when the project forbids subagents (bundled rule via --add-dir; with --use-installed, the user's installed rule)")
+    parser.add_argument("--runs", type=int, default=3, help="runs per --default-rule case")
+    parser.add_argument("--rule-cases", type=lambda v: [c.strip() for c in v.split(",") if c.strip()], default=[], help=f"comma-separated --default-rule cases (default: all of {', '.join(c[0] for c in RULE_CASES)})")
+    parser.add_argument("--rule-model", default="opus", help="session model for --default-rule (the main model users work with)")
     parser.add_argument("--coordinator-model", default="haiku", help="session model; it differs from the skill's so a working override is visible")
     parser.add_argument("--keep-sessions", action="store_true", help="keep the session transcripts the runs leave in Claude Code's projects directory")
     parser.add_argument("--budget", type=float, default=2.0, help="maximum USD per claude run")
@@ -207,23 +295,54 @@ def main() -> int:
                 work = Path(td) / "roles"; work.mkdir()
                 names = ", ".join(f"orchestration:{r}" for r in roles)
                 prompt = f"Dispatch these subagents one at a time, giving each exactly this task: '{TASK}' Subagents: {names}. Do nothing else; after all of them return, reply DONE."
-                cost += run_claude(args.claude, prompt, load_dir, work, args.budget, args.coordinator_model)
+                cost += cost_of(run_claude(args.claude, prompt, load_dir, work, args.budget, args.coordinator_model))
                 results += check_roles(load_events(work / "hooks.jsonl"), plugin_dir, roles)
             if args.skill:
                 work = Path(td) / "skill"; work.mkdir()
-                cost += run_claude(args.claude, f"/orchestration:orchestrate Economy mode. {TASK} Do not delegate.", load_dir, work, args.budget, args.coordinator_model)
+                cost += cost_of(run_claude(args.claude, f"/orchestration:orchestrate Economy mode. {TASK} Do not delegate.", load_dir, work, args.budget, args.coordinator_model))
                 results.append(check_skill(load_events(work / "hooks.jsonl"), plugin_dir))
             if args.tool_surface:
                 work = Path(td) / "tools"; work.mkdir()
                 tasks = " ".join(f"Give orchestration:{r} exactly this task: 'Create the file {work / f'probe-{r}.txt'} containing OK. If no available tool can create files, reply CANNOT.'" for r in READ_ONLY + NO_WRITE_BY_INSTRUCTION)
-                cost += run_claude(args.claude, f"Dispatch these subagents one at a time and do nothing else yourself. {tasks} Then reply DONE.", load_dir, work, args.budget, args.coordinator_model)
+                cost += cost_of(run_claude(args.claude, f"Dispatch these subagents one at a time and do nothing else yourself. {tasks} Then reply DONE.", load_dir, work, args.budget, args.coordinator_model))
                 events = load_events(work / "hooks.jsonl")
                 results += check_read_only(events, work) + check_read_only(events, work, NO_WRITE_BY_INSTRUCTION, "no-write (instruction)")
             if args.agent_path:
                 for role in roles:
                     work = Path(td) / f"agent-{role}"; work.mkdir()
-                    cost += run_claude(args.claude, TASK, load_dir, work, args.budget, None, ("--agent", f"orchestration:{role}"))
+                    cost += cost_of(run_claude(args.claude, TASK, load_dir, work, args.budget, None, ("--agent", f"orchestration:{role}")))
                     results.append(check_agent_session(load_events(work / "hooks.jsonl"), frontmatter(plugin_dir / "agents" / f"{role}.md"), role))
+            if args.default_rule:
+                cfg = Path(os.environ.get("CLAUDE_CONFIG_DIR") or "~/.claude").expanduser().resolve()
+                extra, settings, env = (), None, None
+                if not args.use_installed:  # bundled rule through --add-dir; the user's own instructions are left out
+                    rules = Path(td) / "user-rules" / ".claude/rules"
+                    rules.mkdir(parents=True)
+                    shutil.copyfile(RULE, rules / RULE_FILE)
+                    extra, env = ("--add-dir", str(rules.parents[1])), {"CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD": "1"}
+                    settings = {"claudeMdExcludes": [str(cfg / "CLAUDE.md"), str(cfg / "rules") + "/**"]}
+                for name, task, project_rules, expect in RULE_CASES:
+                    if args.rule_cases and name not in args.rule_cases:
+                        continue
+                    runs = []
+                    for i in range(args.runs):
+                        work = Path(td) / f"rule-{name.replace(' ', '-')}-{i}"
+                        repo = work / "repo"
+                        write_fixture(repo)
+                        if project_rules:
+                            (repo / "CLAUDE.md").write_text(project_rules, encoding="utf-8")
+                        try:
+                            out = run_claude(args.claude, task, load_dir, work, args.budget, args.rule_model, extra, settings, env, repo)
+                        except (RuntimeError, subprocess.TimeoutExpired) as e:
+                            runs.append((False, f"error: {str(e)[:80]}"))
+                            continue
+                        cost += cost_of(out)
+                        ok, seen = rule_run(load_events(work / "hooks.jsonl"), expect)
+                        if name in ANSWERS:
+                            seen += f", answer {'right' if all(a in str(out.get('result', '')) for a in ANSWERS[name]) else 'wrong'}"
+                        runs.append((ok, f"{seen}, ${cost_of(out):.2f}"))
+                    if runs:
+                        results.append(check_rule_case(name, runs, expect))
             if args.interactive:
                 work = Path(td) / "interactive"; work.mkdir()
                 names = ", ".join(f"orchestration:{r}" for r in roles)
