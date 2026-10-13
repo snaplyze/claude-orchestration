@@ -1,6 +1,6 @@
 # Research sources
 
-Primary references rechecked **2026-10-06**; conclusions 1–6, 9, and 10 rechecked **2026-10-09** (see [plan](plan.md)). The complete official documentation index is `https://code.claude.com/docs/llms.txt`.
+Primary references rechecked **2026-10-06**; conclusions 1–6, 9, and 10 rechecked **2026-10-09**, and 11–16 added **2026-10-13** for Claude Code 2.1.296 (see [plan](plan.md)). The complete official documentation index is `https://code.claude.com/docs/llms.txt`.
 
 Core Claude Code references:
 
@@ -20,6 +20,9 @@ Core Claude Code references:
 - Sandboxing: `https://code.claude.com/docs/en/sandboxing`
 - Monitoring usage: `https://code.claude.com/docs/en/monitoring-usage`
 - Plugin evals: `https://code.claude.com/docs/en/plugin-evals`
+- Memory (CLAUDE.md, rules, AGENTS.md): `https://code.claude.com/docs/en/memory`
+- Hooks reference: `https://code.claude.com/docs/en/hooks`
+- Tools reference: `https://code.claude.com/docs/en/tools-reference`
 
 Model and plan references:
 
@@ -42,3 +45,9 @@ Important conclusions:
 8. Current upstream issues show that effort frontmatter is path-sensitive in some Claude Code versions. See `verification.md`; static declarations are not presented as proof of runtime application.
 9. Claude Code v2.1.277+ reads `AGENTS.md` as project instructions when no `CLAUDE.md`/`CLAUDE.local.md` exists (`https://code.claude.com/docs/en/memory#agents-md`); subagents load these instructions except Explore and Plan or a definition with `omitClaudeMd`.
 10. A top-level `effortLevel` in project settings applies to every model; in user settings it is ignored for Opus 5.5 and later (`https://code.claude.com/docs/en/settings-reference#effortlevel`).
+11. User rules in `~/.claude/rules/` apply to every project and load with project rules (user first; neither overrides the other). Block-level HTML comments in instruction files are stripped before injection, and startup instructions reload after compaction (`/en/memory`, `/en/context-window`). The installer therefore owns a separate rule file instead of editing `CLAUDE.md`.
+12. `CLAUDE.md` and rules are delivered as context, not enforced configuration; specific, concise instructions are followed more consistently (`/en/memory`). Delegation is chosen from each agent's `description`, and the docs recommend phrases such as "use proactively" (`/en/sub-agents`). The default rule's effect is therefore measured at runtime (`runtime_smoke.py --default-rule`), not assumed.
+13. Explore and Plan skip `CLAUDE.md`; every other built-in and custom subagent loads it, and subagents may nest three levels deep by default (`/en/sub-agents`, `/en/env-vars`). The rule says it is for the main session only.
+14. The Agent tool's per-call `model` and (since v2.1.292) `effort` override the subagent's frontmatter; `subagent_type` omitted means general-purpose (`/en/hooks`, `/en/sub-agents`). The rule forbids both overrides for the roles.
+15. On macOS, Linux, and WSL, Glob and Grep are absent from the default tool set unless a subagent lists them without `Bash`; on Windows without Git Bash, PowerShell is the only shell, and a listed tool that is unavailable is not granted (`/en/tools-reference`).
+16. A plugin cannot ship `CLAUDE.md` context; plugin `settings.json` honors only `agent` (which replaces the main system prompt) and `subagentStatusLine`; local-folder marketplace plugins load in place (`readFromFolder`) (`/en/plugins/manifest-reference`, `/en/plugins/components`, `/en/plugins/loading`). `claude plugin eval` cannot load the user `CLAUDE.md` (`/en/plugin-evals`).

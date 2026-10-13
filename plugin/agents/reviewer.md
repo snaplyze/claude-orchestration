@@ -1,7 +1,7 @@
 ---
 name: reviewer
-description: Independent code reviewer. Use after material changes for correctness, security, regressions, concurrency, data integrity, compatibility, and missing tests.
-tools: Read, Grep, Glob, Bash
+description: Independent read-only reviewer of the actual diff. Use proactively before reporting a material change as done (several files, a public interface, security, data, concurrency, or migrations) to find correctness, security, and regression defects and missing tests.
+tools: Read, Grep, Glob, Bash, PowerShell
 model: opus
 effort: high
 maxTurns: 18

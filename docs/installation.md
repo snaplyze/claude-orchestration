@@ -83,4 +83,5 @@ python scripts/install.py --user --uninstall --default-rule --register
 ```
 
 Verify the installed copy with
-`python scripts/runtime_smoke.py --use-installed --plugin-dir ~/.claude-orchestration/plugin --skill`.
+`python scripts/runtime_smoke.py --use-installed --plugin-dir ~/.claude-orchestration/plugin --skill --default-rule`;
+the `--default-rule` cases then use your installed rule file.

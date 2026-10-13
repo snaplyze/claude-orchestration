@@ -5,7 +5,7 @@ Evidence comes from Claude Code itself: SubagentStop/Stop hook input reports the
 session transcripts record the model of every assistant message. Each run makes real (paid) model calls.
 """
 from __future__ import annotations
-import argparse, json, os, shutil, subprocess, sys, tempfile, time
+import argparse, json, os, shlex, shutil, subprocess, sys, tempfile, time
 from pathlib import Path
 from install import PLUGIN, frontmatter
 
@@ -13,7 +13,7 @@ ROLES = ("explorer", "researcher", "worker", "tester", "reviewer")
 TASK = "Reply with the single word OK. Do not use any tools."
 READ_ONLY = ("explorer", "researcher")  # no write tools in frontmatter
 NO_WRITE_BY_INSTRUCTION = ("reviewer",)  # keeps Bash; its no-write rule is behavioral
-WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit", "Bash"}
+WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit", "Bash", "PowerShell"}
 HOOK = "import sys\nwith open(sys.argv[1], 'a', encoding='utf-8') as f:\n    f.write(sys.stdin.read().strip() + '\\n')\n"
 HOOK_EVENTS = ("PreToolUse", "SubagentStop", "Stop", "InstructionsLoaded")
 RULE = Path(__file__).resolve().parent / "default-orchestration-rule.md"
@@ -36,24 +36,35 @@ NO_SUBAGENTS = "# Project rules\n\nDo all work in the main session. Do not use s
 # (name, task, project CLAUDE.md, expected): None = no Agent call; otherwise only orchestration roles, including these.
 RULE_CASES = (("map", MAP_TASK, None, frozenset()), ("lookup", LOOKUP_TASK, None, None), ("project forbids", MAP_TASK, NO_SUBAGENTS, None),
               ("change", CHANGE_TASK, None, frozenset({"orchestration:reviewer"})), ("research", RESEARCH_TASK, None, frozenset({"orchestration:researcher"})))
+NEEDLE = "needle-7f3a.txt"  # --capabilities: hidden among decoys, found only by searching
 ANSWERS = {"map": [value.strip('"') for *_, value, _ in FLOWS], "lookup": ["0.19"], "project forbids": [value.strip('"') for *_, value, _ in FLOWS]}
 
 
+def json_lines(path: Path) -> list[dict]:
+    """The JSON objects in a JSONL file, skipping a line still being written."""
+    records = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(record, dict):
+            records.append(record)
+    return records
+
+
 def transcript_models(path: str) -> list[str]:
-    models = []
-    for line in Path(path).read_text(encoding="utf-8").splitlines():
-        model = (json.loads(line).get("message") or {}).get("model") if line.strip() else None
-        if model and not model.startswith("<"):
-            models.append(model)
-    return models
+    models = [(record.get("message") or {}).get("model") for record in json_lines(Path(path))]
+    return [m for m in models if isinstance(m, str) and m and not m.startswith("<")]
 
 
 def load_events(log: Path) -> list[dict]:
-    return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines() if line.strip()] if log.exists() else []
+    return json_lines(log) if log.exists() else []
 
 
 def verdict(name: str, want: dict, effort: str | None, models: list[str]) -> dict:
-    ok = effort == want.get("effort") and bool(models) and all(want.get("model", "?") in m for m in models)
+    model = want.get("model") or ""
+    ok = bool(want.get("effort")) and effort == want["effort"] and bool(model) and bool(models) and all(model in m for m in models)
     return {"name": name, "want": f"{want.get('model')}/{want.get('effort')}", "seen": f"{','.join(sorted(set(models))) or '-'}/{effort or '-'}", "ok": ok}
 
 
@@ -91,7 +102,7 @@ def check_agent_session(events: list[dict], want: dict, role: str) -> dict:
     turn = last_session_turn(events)
     effort, models = turn if turn else (None, [])
     return {"name": f"{role} --agent", "want": f"{want.get('model')} (effort not applied)",
-            "seen": f"{','.join(models) or '-'}/{effort or '-'}", "ok": bool(models) and want.get("model", "?") in models[0]}
+            "seen": f"{','.join(models) or '-'}/{effort or '-'}", "ok": bool(models) and bool(want.get("model")) and want["model"] in models[0]}
 
 
 def check_read_only(events: list[dict], work: Path, roles=READ_ONLY, label="read-only") -> list[dict]:
@@ -103,6 +114,19 @@ def check_read_only(events: list[dict], work: Path, roles=READ_ONLY, label="read
         created = (work / f"probe-{role}.txt").exists()
         seen = "not dispatched" if not dispatched else f"write tools {writes or 'none'}, file {'created' if created else 'absent'}"
         results.append({"name": f"{role} {label}", "want": "no write", "seen": seen, "ok": dispatched and not writes and not created})
+    return results
+
+
+def check_capabilities(events: list[dict]) -> list[dict]:
+    """explorer must find the needle with a search tool, and researcher must fetch the page with a web tool."""
+    stops = {e.get("agent_type"): e for e in events if e.get("hook_event_name") == "SubagentStop"}
+    results = []
+    for role, tools, answer in (("explorer", {"Glob", "Grep"}, NEEDLE), ("researcher", {"WebFetch", "WebSearch"}, "Example Domain")):
+        stop = stops.get(f"orchestration:{role}")
+        used = sorted({e.get("tool_name") for e in events if e.get("hook_event_name") == "PreToolUse" and e.get("agent_type") == f"orchestration:{role}"} & tools)
+        right = stop is not None and answer in str(stop.get("last_assistant_message") or "")
+        seen = "not dispatched" if stop is None else f"tools {used or 'none'}, answer {'right' if right else 'wrong'}"
+        results.append({"name": f"{role} capability", "want": "/".join(sorted(tools)), "seen": seen, "ok": right and bool(used)})
     return results
 
 
@@ -215,15 +239,17 @@ def run_interactive(claude: str, steps: list[tuple[str, object]], plugin_dir: Pa
     if not shutil.which("tmux"):
         raise RuntimeError("--interactive needs tmux")
     session, log = f"orchestration-smoke-{work.parent.name[-8:]}", work / "hooks.jsonl"
-    plugin_arg = f' --plugin-dir "{plugin_dir}"' if plugin_dir else ""
-    command = f'{claude}{plugin_arg} --settings "{write_settings(work)}" --model {model}'
-    subprocess.run(["tmux", "new-session", "-d", "-s", session, "-x", "200", "-y", "50", command], check=True)
+    # A private tmux server (its socket inside work/) starts from this process, so the session gets this environment
+    # (PATH, CLAUDE_CONFIG_DIR, ...) rather than that of a server the user already runs.
+    tmux = ["tmux", "-S", str(work / "tmux.sock")]
+    command = shlex.join([claude, *(["--plugin-dir", str(plugin_dir)] if plugin_dir else []), "--settings", str(write_settings(work)), "--model", model])
+    subprocess.run([*tmux, "new-session", "-d", "-s", session, "-x", "200", "-y", "50", command], check=True)
     snapshots = []
     try:
         for i, (prompt, done) in enumerate(steps):
             time.sleep(5)  # let the TUI accept input
-            subprocess.run(["tmux", "send-keys", "-t", session, "-l", prompt], check=True)
-            subprocess.run(["tmux", "send-keys", "-t", session, "Enter"], check=True)
+            subprocess.run([*tmux, "send-keys", "-t", session, "-l", prompt], check=True)
+            subprocess.run([*tmux, "send-keys", "-t", session, "Enter"], check=True)
             deadline = time.monotonic() + timeout
             while not done(load_events(log)):
                 if time.monotonic() > deadline:
@@ -239,12 +265,12 @@ def run_interactive(claude: str, steps: list[tuple[str, object]], plugin_dir: Pa
             snapshots.append(events)
     finally:
         # Exit cleanly so Claude Code finishes writing its transcript before forget_sessions removes it.
-        subprocess.run(["tmux", "send-keys", "-t", session, "-l", "/exit"], capture_output=True)
-        subprocess.run(["tmux", "send-keys", "-t", session, "Enter"], capture_output=True)
+        subprocess.run([*tmux, "send-keys", "-t", session, "-l", "/exit"], capture_output=True)
+        subprocess.run([*tmux, "send-keys", "-t", session, "Enter"], capture_output=True)
         deadline = time.monotonic() + 30
-        while time.monotonic() < deadline and subprocess.run(["tmux", "has-session", "-t", session], capture_output=True).returncode == 0:
+        while time.monotonic() < deadline and subprocess.run([*tmux, "has-session", "-t", session], capture_output=True).returncode == 0:
             time.sleep(1)
-        subprocess.run(["tmux", "kill-session", "-t", session], capture_output=True)
+        subprocess.run([*tmux, "kill-server"], capture_output=True)
     return snapshots
 
 
@@ -256,13 +282,28 @@ def run_claude(claude: str, prompt: str, plugin_dir: Path | None, work: Path, bu
         args += ["--model", model]
     args += list(extra)
     proc = subprocess.run(args, cwd=cwd or work, capture_output=True, text=True, timeout=900, env={**os.environ, **(env or {})})
-    if proc.returncode != 0:
-        raise RuntimeError(f"claude exited {proc.returncode}: {proc.stderr.strip() or proc.stdout.strip()}")
-    return json.loads(proc.stdout)
+    try:
+        out = json.loads(proc.stdout)
+    except ValueError:
+        out = {}
+    if proc.returncode != 0 or not isinstance(out, dict) or out.get("is_error"):
+        detail = (out.get("result") if isinstance(out, dict) else None) or proc.stderr.strip() or proc.stdout.strip()
+        raise RunFailed(f"claude exited {proc.returncode}: {str(detail)[:200]}", cost_of(out) if isinstance(out, dict) else 0.0)
+    return out
+
+
+class RunFailed(RuntimeError):
+    """A claude run that failed; cost is what it reported spending before it stopped."""
+    def __init__(self, message: str, cost: float = 0.0):
+        super().__init__(message)
+        self.cost = cost
 
 
 def cost_of(out: dict) -> float:
-    return float(out.get("total_cost_usd") or 0)
+    try:
+        return float(out.get("total_cost_usd") or 0)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def main() -> int:
@@ -272,6 +313,7 @@ def main() -> int:
     parser.add_argument("--roles", default=",".join(ROLES), help="comma-separated roles to dispatch")
     parser.add_argument("--skill", action="store_true", help="also invoke /orchestration:orchestrate and check its model/effort")
     parser.add_argument("--tool-surface", action="store_true", help="also ask read-only roles to create a file and check they cannot")
+    parser.add_argument("--capabilities", action="store_true", help="also check that explorer can search (finds a hidden file) and researcher can fetch a web page")
     parser.add_argument("--agent-path", action="store_true", help="also start each role as the session agent (claude --agent) and check its model/effort")
     parser.add_argument("--interactive", action="store_true", help="also repeat the role and skill checks in an interactive session driven through tmux (run from a trusted folder; cost is not reported)")
     parser.add_argument("--default-rule", action="store_true", help="also check that the default-orchestration rule makes a session delegate to the roles in an unfamiliar repository, and not for a one-file lookup or when the project forbids subagents (bundled rule via --add-dir; with --use-installed, the user's installed rule)")
@@ -288,82 +330,135 @@ def main() -> int:
     unknown = set(roles) - set(ROLES)
     if unknown:
         parser.error(f"unknown roles: {sorted(unknown)}")
-    results, cost = [], 0.0
+    if set(args.rule_cases) - {c[0] for c in RULE_CASES}:
+        parser.error(f"unknown --rule-cases: {sorted(set(args.rule_cases) - {c[0] for c in RULE_CASES})}")
+    results, spent = [], [0.0]
+
+    def run(work: Path, prompt: str, model: str | None, extra: tuple = (), **kw) -> dict:
+        work.mkdir(parents=True, exist_ok=True)
+        try:
+            out = run_claude(args.claude, prompt, load_dir, work, args.budget, model, extra, **kw)
+        except RunFailed as e:
+            spent[0] += e.cost
+            raise
+        spent[0] += cost_of(out)
+        return out
+
+    def mode(name: str, check) -> None:
+        """Run one mode; a failed run becomes a FAIL row instead of discarding the results so far."""
+        try:
+            check()
+        except (RunFailed, RuntimeError, subprocess.SubprocessError) as e:
+            results.append({"name": name, "want": "a completed run", "seen": f"error: {str(e)[:160]}", "ok": False})
+
     with tempfile.TemporaryDirectory(prefix="orchestration-smoke-") as td:
+        names = ", ".join(f"orchestration:{r}" for r in roles)
+
+        def dispatch_roles():
+            work = Path(td) / "roles"
+            run(work, f"Dispatch these subagents one at a time, giving each exactly this task: '{TASK}' Subagents: {names}. Do nothing else; after all of them return, reply DONE.", args.coordinator_model)
+            results.extend(check_roles(load_events(work / "hooks.jsonl"), plugin_dir, roles))
+
+        def skill():
+            work = Path(td) / "skill"
+            run(work, f"/orchestration:orchestrate Economy mode. {TASK} Do not delegate.", args.coordinator_model)
+            results.append(check_skill(load_events(work / "hooks.jsonl"), plugin_dir))
+
+        def tool_surface():
+            work = Path(td) / "tools"
+            work.mkdir()
+            tasks = " ".join(f"Give orchestration:{r} exactly this task: 'Create the file {work / f'probe-{r}.txt'} containing OK. If no available tool can create files, reply CANNOT.'" for r in READ_ONLY + NO_WRITE_BY_INSTRUCTION)
+            run(work, f"Dispatch these subagents one at a time and do nothing else yourself. {tasks} Then reply DONE.", args.coordinator_model)
+            events = load_events(work / "hooks.jsonl")
+            results.extend(check_read_only(events, work) + check_read_only(events, work, NO_WRITE_BY_INSTRUCTION, "no-write (instruction)"))
+
+        def capabilities():
+            work = Path(td) / "capabilities"
+            probe = work / "probe"
+            for i in range(30):
+                (probe / f"d{i % 5}" / f"s{i % 3}").mkdir(parents=True, exist_ok=True)
+                (probe / f"d{i % 5}" / f"s{i % 3}" / f"item-{i}.txt").write_text("decoy\n", encoding="utf-8")
+            (probe / "d3/s1" / NEEDLE).write_text("needle\n", encoding="utf-8")
+            prompt = ("Dispatch these subagents one at a time and do nothing else yourself. Give orchestration:explorer exactly this task: "
+                      f"'Find the file whose name starts with needle- anywhere under {probe} and reply with its file name only.' Give "
+                      "orchestration:researcher exactly this task: 'Fetch https://example.com and reply with the page title only.' Then reply DONE.")
+            run(work, prompt, args.coordinator_model, ("--allowedTools", "WebFetch(domain:example.com)"))
+            results.extend(check_capabilities(load_events(work / "hooks.jsonl")))
+
+        def agent_path(role: str):
+            work = Path(td) / f"agent-{role}"
+            run(work, TASK, None, ("--agent", f"orchestration:{role}"))
+            results.append(check_agent_session(load_events(work / "hooks.jsonl"), frontmatter(plugin_dir / "agents" / f"{role}.md"), role))
+
+        def default_rule(name: str, task: str, project_rules: str | None, expect: frozenset | None):
+            cfg = Path(os.environ.get("CLAUDE_CONFIG_DIR") or "~/.claude").expanduser().resolve()
+            extra, settings, env = (), None, None
+            if not args.use_installed:  # bundled rule through --add-dir; the user's own instructions are left out
+                rules = Path(td) / "user-rules" / ".claude/rules"
+                rules.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(RULE, rules / RULE_FILE)
+                extra, env = ("--add-dir", str(rules.parents[1])), {"CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD": "1"}
+                settings = {"claudeMdExcludes": [str(cfg / "CLAUDE.md"), str(cfg / "rules") + "/**"]}
+            runs = []
+            for i in range(args.runs):
+                work = Path(td) / f"rule-{name.replace(' ', '-')}-{i}"
+                repo = work / "repo"
+                write_fixture(repo)
+                if project_rules:
+                    (repo / "CLAUDE.md").write_text(project_rules, encoding="utf-8")
+                try:
+                    out = run(work, task, args.rule_model, extra, settings=settings, env=env, cwd=repo)
+                except (RunFailed, subprocess.TimeoutExpired) as e:
+                    runs.append((False, f"error: {str(e)[:80]}"))
+                    continue
+                ok, seen = rule_run(load_events(work / "hooks.jsonl"), expect)
+                if name in ANSWERS:
+                    seen += f", answer {'right' if all(a in str(out.get('result', '')) for a in ANSWERS[name]) else 'wrong'}"
+                runs.append((ok, f"{seen}, ${cost_of(out):.2f}"))
+            results.append(check_rule_case(name, runs, expect))
+
+        def interactive():
+            work = Path(td) / "interactive"
+            work.mkdir()
+            stops = lambda n: (lambda ev: sum(e.get("hook_event_name") == "Stop" for e in ev) >= n)
+            role_stops = lambda ev: len({e.get("agent_type") for e in ev if e.get("hook_event_name") == "SubagentStop"} & {f"orchestration:{r}" for r in roles}) == len(roles)
+            steps = [(f"/orchestration:orchestrate Economy mode. {TASK} Do not delegate.", stops(1))]
+            if roles:  # interactive sessions may run subagents in the background over several turns
+                steps.append((f"Dispatch these subagents, giving each exactly this task: '{TASK}' Subagents: {names}. Do nothing else; when all have returned, reply DONE.", role_stops))
+            snapshots = run_interactive(args.claude, steps, load_dir, work, args.coordinator_model)
+            checks = [check_skill(snapshots[0], plugin_dir), *(check_roles(snapshots[-1], plugin_dir, roles) if roles else [])]
+            results.extend(dict(r, name=f"{r['name']} (interactive)") for r in checks)
+
         try:
             if roles:
-                work = Path(td) / "roles"; work.mkdir()
-                names = ", ".join(f"orchestration:{r}" for r in roles)
-                prompt = f"Dispatch these subagents one at a time, giving each exactly this task: '{TASK}' Subagents: {names}. Do nothing else; after all of them return, reply DONE."
-                cost += cost_of(run_claude(args.claude, prompt, load_dir, work, args.budget, args.coordinator_model))
-                results += check_roles(load_events(work / "hooks.jsonl"), plugin_dir, roles)
+                mode("roles", dispatch_roles)
             if args.skill:
-                work = Path(td) / "skill"; work.mkdir()
-                cost += cost_of(run_claude(args.claude, f"/orchestration:orchestrate Economy mode. {TASK} Do not delegate.", load_dir, work, args.budget, args.coordinator_model))
-                results.append(check_skill(load_events(work / "hooks.jsonl"), plugin_dir))
+                mode("orchestrate skill", skill)
             if args.tool_surface:
-                work = Path(td) / "tools"; work.mkdir()
-                tasks = " ".join(f"Give orchestration:{r} exactly this task: 'Create the file {work / f'probe-{r}.txt'} containing OK. If no available tool can create files, reply CANNOT.'" for r in READ_ONLY + NO_WRITE_BY_INSTRUCTION)
-                cost += cost_of(run_claude(args.claude, f"Dispatch these subagents one at a time and do nothing else yourself. {tasks} Then reply DONE.", load_dir, work, args.budget, args.coordinator_model))
-                events = load_events(work / "hooks.jsonl")
-                results += check_read_only(events, work) + check_read_only(events, work, NO_WRITE_BY_INSTRUCTION, "no-write (instruction)")
+                mode("tool surface", tool_surface)
+            if args.capabilities:
+                mode("capabilities", capabilities)
             if args.agent_path:
                 for role in roles:
-                    work = Path(td) / f"agent-{role}"; work.mkdir()
-                    cost += cost_of(run_claude(args.claude, TASK, load_dir, work, args.budget, None, ("--agent", f"orchestration:{role}")))
-                    results.append(check_agent_session(load_events(work / "hooks.jsonl"), frontmatter(plugin_dir / "agents" / f"{role}.md"), role))
+                    mode(f"{role} --agent", lambda role=role: agent_path(role))
             if args.default_rule:
-                cfg = Path(os.environ.get("CLAUDE_CONFIG_DIR") or "~/.claude").expanduser().resolve()
-                extra, settings, env = (), None, None
-                if not args.use_installed:  # bundled rule through --add-dir; the user's own instructions are left out
-                    rules = Path(td) / "user-rules" / ".claude/rules"
-                    rules.mkdir(parents=True)
-                    shutil.copyfile(RULE, rules / RULE_FILE)
-                    extra, env = ("--add-dir", str(rules.parents[1])), {"CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD": "1"}
-                    settings = {"claudeMdExcludes": [str(cfg / "CLAUDE.md"), str(cfg / "rules") + "/**"]}
-                for name, task, project_rules, expect in RULE_CASES:
-                    if args.rule_cases and name not in args.rule_cases:
-                        continue
-                    runs = []
-                    for i in range(args.runs):
-                        work = Path(td) / f"rule-{name.replace(' ', '-')}-{i}"
-                        repo = work / "repo"
-                        write_fixture(repo)
-                        if project_rules:
-                            (repo / "CLAUDE.md").write_text(project_rules, encoding="utf-8")
-                        try:
-                            out = run_claude(args.claude, task, load_dir, work, args.budget, args.rule_model, extra, settings, env, repo)
-                        except (RuntimeError, subprocess.TimeoutExpired) as e:
-                            runs.append((False, f"error: {str(e)[:80]}"))
-                            continue
-                        cost += cost_of(out)
-                        ok, seen = rule_run(load_events(work / "hooks.jsonl"), expect)
-                        if name in ANSWERS:
-                            seen += f", answer {'right' if all(a in str(out.get('result', '')) for a in ANSWERS[name]) else 'wrong'}"
-                        runs.append((ok, f"{seen}, ${cost_of(out):.2f}"))
-                    if runs:
-                        results.append(check_rule_case(name, runs, expect))
+                for case in RULE_CASES:
+                    if not args.rule_cases or case[0] in args.rule_cases:
+                        mode(f"default rule: {case[0]}", lambda case=case: default_rule(*case))
             if args.interactive:
-                work = Path(td) / "interactive"; work.mkdir()
-                names = ", ".join(f"orchestration:{r}" for r in roles)
-                stops = lambda n: (lambda ev: sum(e.get("hook_event_name") == "Stop" for e in ev) >= n)
-                role_stops = lambda ev: len({e.get("agent_type") for e in ev if e.get("hook_event_name") == "SubagentStop"} & {f"orchestration:{r}" for r in roles}) == len(roles)
-                steps = [(f"/orchestration:orchestrate Economy mode. {TASK} Do not delegate.", stops(1))]
-                if roles:  # interactive sessions may run subagents in the background over several turns
-                    steps.append((f"Dispatch these subagents, giving each exactly this task: '{TASK}' Subagents: {names}. Do nothing else; when all have returned, reply DONE.", role_stops))
-                snapshots = run_interactive(args.claude, steps, load_dir, work, args.coordinator_model)
-                checks = [check_skill(snapshots[0], plugin_dir), *(check_roles(snapshots[-1], plugin_dir, roles) if roles else [])]
-                results += [dict(r, name=f"{r['name']} (interactive)") for r in checks]
+                mode("interactive", interactive)
         finally:
             if not args.keep_sessions:
                 for work in Path(td).iterdir():
                     forget_sessions(load_events(work / "hooks.jsonl"))
+    if not results:
+        print("no checks selected (pass --roles or a mode such as --skill)")
+        return 2
     width = max(len(r["name"]) for r in results)
     for r in results:
         print(f"{'PASS' if r['ok'] else 'FAIL'}  {r['name']:<{width}}  expected {r['want']:<14}  seen {r['seen']}")
-    print(f"cost: ${cost:.4f}")
+    print(f"cost: ${spent[0]:.4f}")
     return 0 if all(r["ok"] for r in results) else 1
-
 
 if __name__ == "__main__":
     sys.exit(main())

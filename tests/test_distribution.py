@@ -1,4 +1,4 @@
-import json, os, shutil, subprocess, sys, tempfile, unittest
+import contextlib, io, json, os, shutil, subprocess, sys, tempfile, unittest
 from pathlib import Path
 from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,8 +16,10 @@ class DistributionTests(unittest.TestCase):
     def test_doctor_rejects_invalid_profile_frontmatter_and_doc_drift(self):
         with tempfile.TemporaryDirectory() as td:
             t=Path(td)
-            for d in ("plugin","profiles","docs"): shutil.copytree(ROOT/d,t/d)
-            doc=t/"docs/models-and-plans.md"; doc.write_text(doc.read_text().replace("| `team-premium` | Opus high | Haiku low |","| `team-premium` | Opus high | Sonnet low |"))
+            for d in ("plugin","profiles","docs",".claude-plugin"): shutil.copytree(ROOT/d,t/d)
+            m=t/".claude-plugin/marketplace.json"; m.write_text(m.read_text().replace('"./plugin"','"./other"'))
+            (t/"scripts").mkdir(); rule=t/"scripts/default-orchestration-rule.md"; rule.write_text((ROOT/rule.relative_to(t)).read_text().replace("orchestration:tester","orchestration:qa"))
+            doc=t/"docs/models-and-plans.md"; doc.write_text(doc.read_text().replace("| `team-premium` | Opus high | Haiku low |","| `team-premium` | Opus high | Sonnet low |").replace("| `api-quality` |","| `pro-legacy` | Opus max |\n| `pro-economy` | Sonnet medium |\n| `api-quality` |"))
             p=t/"profiles/pro-economy.json"; d=json.loads(p.read_text()); d["agents"]["tester"]=["gpt","max"]; p.write_text(json.dumps(d))
             install.patch_frontmatter(t/"plugin/agents/worker.md",{"effort":"low"})
             errors=doctor.check(t)
@@ -25,6 +27,9 @@ class DistributionTests(unittest.TestCase):
             self.assertTrue(any("must match pro-balanced.json" in e for e in errors),errors)
             self.assertTrue(any("row team-premium" in e for e in errors),errors)
             self.assertTrue(any("docs/architecture.md: row worker" in e for e in errors),errors)
+            self.assertTrue(any("must name exactly the roles" in e and "'qa'" in e for e in errors),errors)
+            for message in ("marketplace.json must list only orchestration from ./plugin","duplicate row pro-economy","row pro-legacy has no profile"):
+                self.assertTrue(any(message in e for e in errors),(message,errors))
     def test_runtime_smoke_judges_hook_and_transcript_evidence(self):
         with tempfile.TemporaryDirectory() as td:
             t=Path(td)
@@ -61,6 +66,19 @@ class DistributionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             runtime_smoke.write_fixture(Path(td)); r=subprocess.run([sys.executable,"-I","-c","import sys;sys.path.insert(0,'.');from orders import api as o;from billing import api as b;from notify import api as n;print(o.create_order({})['table'],b.invoice({})['vat_rate'],n.send({})['max_retries'])"],cwd=td,capture_output=True,text=True)
             self.assertEqual(r.stdout.split(),runtime_smoke.ANSWERS["map"]); self.assertGreater(sum(len(f.read_text().splitlines()) for f in Path(td).rglob("*.py")),3000)
+    def test_runtime_smoke_fails_closed_and_keeps_partial_results(self):
+        with tempfile.TemporaryDirectory() as td:
+            f=Path(td)/"t.jsonl"; f.write_text(json.dumps({"message":{"model":"claude-opus-5-5"}})+"\n7\n"+'{"message":{"mod'); self.assertEqual(runtime_smoke.transcript_models(str(f)),["claude-opus-5-5"])
+            self.assertFalse(runtime_smoke.verdict("r",{"model":"","effort":"high"},"high",["claude-opus-5-5"])["ok"]); self.assertFalse(runtime_smoke.verdict("r",{"model":"opus"},None,["claude-opus-5-5"])["ok"])
+            self.assertFalse(runtime_smoke.check_agent_session([{"hook_event_name":"Stop","transcript_path":str(f)}],{"model":""},"r")["ok"])
+        stop=lambda role,text:{"hook_event_name":"SubagentStop","agent_type":f"orchestration:{role}","last_assistant_message":text}
+        use=lambda role,tool:{"hook_event_name":"PreToolUse","agent_type":f"orchestration:{role}","tool_name":tool}
+        got=runtime_smoke.check_capabilities([stop("explorer",runtime_smoke.NEEDLE),use("explorer","Glob"),stop("researcher","Example Domain"),use("researcher","Read")])
+        self.assertEqual([r["ok"] for r in got],[True,False])
+        out=io.StringIO()
+        with mock.patch.object(runtime_smoke,"run_claude",side_effect=runtime_smoke.RunFailed("budget exceeded",0.75)), mock.patch.object(sys,"argv",["smoke","--roles","explorer","--skill"]), contextlib.redirect_stdout(out):
+            self.assertEqual(runtime_smoke.main(),1)
+        self.assertIn("FAIL  roles",out.getvalue()); self.assertIn("FAIL  orchestrate skill",out.getvalue()); self.assertIn("cost: $1.5000",out.getvalue())
     def test_runtime_smoke_forgets_only_its_own_sessions(self):
         with tempfile.TemporaryDirectory() as td:
             cfg=Path(td)/"cfg"; work=cfg/"projects/-tmp-smoke-roles"; (work/"s1/subagents").mkdir(parents=True)

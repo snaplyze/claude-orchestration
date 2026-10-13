@@ -10,7 +10,10 @@ python scripts/doctor.py
 sh -n setup.sh
 claude plugin validate --strict ./plugin                    # when Claude Code is installed
 python scripts/runtime_smoke.py --skill --tool-surface      # plugin, profile, or installer changes
+python scripts/runtime_smoke.py --roles "" --default-rule   # rule or agent-description changes (all cases, 3 runs each)
 ```
+
+The workflows pin Claude Code (`npm install --global @anthropic-ai/claude-code@<version>` in `ci.yml` and `runtime-smoke.yml`). When you re-verify on a newer client, bump both pins and the "tested on" version in the README together.
 
 `runtime_smoke.py` makes real model calls under your Claude login. In CI the `Runtime smoke` workflow runs it only for runs the repository owner authored and started, because it uses the owner's subscription token.
 

@@ -8,7 +8,8 @@ permissions:
   contents: read
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Superseded PR runs are cancelled; every push to main keeps its own complete run.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   test:
     name: ${{ matrix.os }} / Python ${{ matrix.python }}
@@ -49,6 +50,13 @@ jobs:
           ./setup.ps1 -User -Uninstall -MarketplaceDir $m
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           if (Test-Path $m) { throw 'marketplace not removed' }
+          $env:CLAUDE_CONFIG_DIR = Join-Path $env:RUNNER_TEMP 'ps-config'
+          ./setup.ps1 -DefaultRule
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          if (-not (Test-Path (Join-Path $env:CLAUDE_CONFIG_DIR 'rules/claude-orchestration.md'))) { throw 'rule not installed' }
+          ./setup.ps1 -DefaultRule -Uninstall
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          if (Test-Path (Join-Path $env:CLAUDE_CONFIG_DIR 'rules')) { throw 'rule not removed' }
   shell:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -68,3 +76,25 @@ jobs:
           test -f "$t/marketplace/.claude-plugin/marketplace.json"
           ./setup.sh --user --uninstall --marketplace-dir "$t/marketplace"
           test ! -e "$t/marketplace"
+          CLAUDE_CONFIG_DIR="$t/config" ./setup.sh --default-rule
+          test -f "$t/config/rules/claude-orchestration.md"
+          CLAUDE_CONFIG_DIR="$t/config" ./setup.sh --default-rule --uninstall
+          test ! -e "$t/config/rules"
+  plugin:
+    # Claude Code's own validator; it needs no login, so this job has no secret.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install Claude Code (pinned)
+        run: npm install --global @anthropic-ai/claude-code@2.1.296
+      - run: claude plugin validate --strict ./plugin
+      - run: claude plugin validate --strict .
+      - name: Generated user marketplace
+        run: |
+          t=$(mktemp -d)
+          python3 scripts/install.py --user --profile max-20x-thorough --marketplace-dir "$t/marketplace"
+          claude plugin validate --strict "$t/marketplace"
+          claude plugin validate --strict "$t/marketplace/plugin"
