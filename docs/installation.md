@@ -6,7 +6,7 @@ Requirements: Python 3.11+ (the CI matrix is in [verification](verification.md))
 ./setup.sh /workspace/project --profile pro-balanced
 ```
 
-The plugin is copied to `.claude/plugins/orchestration`; selected profile keys are merged into `.claude/settings.json`. Unrelated settings are preserved. The installer records under `claude-orchestration` the profile, the keys it owns, their values before installation, and the values it applied; uninstall and profile switches restore the prior values, except for a key you changed after installing, which keeps your value. Rerunning setup without `--profile` refreshes the plugin and keeps the installed profile.
+The plugin is copied to `.claude/plugins/orchestration`; selected profile keys are merged into `.claude/settings.json`. Unrelated settings are preserved. The installer records under `claude-orchestration` the profile, the keys it owns, their values before installation, and the values it applied; uninstall and profile switches restore the prior values, except for a key you changed after installing, which keeps your value. Rerunning setup without `--profile` refreshes the plugin and keeps the installed profile; on such a rerun a managed key you changed by hand keeps your value (uninstall still restores the value recorded before installation), while an explicit `--profile`, the same or another, applies the profile's values.
 
 Run it explicitly:
 
@@ -16,13 +16,13 @@ claude --plugin-dir .claude/plugins/orchestration
 
 A project install writes nothing outside `<project>/.claude`; for an install that applies to every project, see the user-scope section below or the README.
 
-Switch profile by rerunning setup with another `--profile`. Remove managed plugin/settings with:
+Switch profile by rerunning setup with another `--profile`. Remove managed plugin/settings with (the settings file, `plugins/` and `.claude` go too when nothing else is left in them):
 
 ```bash
 ./setup.sh /workspace/project --uninstall
 ```
 
-The installer refuses symlinks and Windows junctions in the destination chain (the list is in [security](security.md), so writes cannot leave the target or replace a link), accepts only profile names from `profiles/`, stages the new copy next to the destination, and swaps it in with a rename. On ordinary failures it restores the previous plugin directory and the exact previous `settings.json` bytes. It is not a crash-consistent filesystem transaction across power loss or hostile races; a crash can leave a `.claude/plugins/.orchestration-*` work directory. If restoring the previous plugin itself fails, the installer keeps that directory and prints where the previous copy is; otherwise the work directory is safe to delete.
+The installer refuses symlinks and Windows junctions in the destination chain (the list is in [security](security.md), so writes cannot leave the target or replace a link), accepts only profile names from `profiles/`, stages the new copy next to the destination, and swaps it in with a rename. On ordinary failures it restores the previous plugin directory and the exact previous `settings.json` bytes. Uninstall goes the same way: the settings are written first, and the plugin is parked beside its directory until that succeeds. Two runs on one target do not overlap: while one holds `.orchestration.lock` in the directory it changes (`.claude/`, the marketplace directory, the config directory for the rule), a second refuses with `another install is running`. The lock only keeps installer runs apart: it is not a crash-consistent filesystem transaction across power loss or hostile races, and a crash can leave a `.claude/plugins/.orchestration-*` work directory. If restoring the previous plugin itself fails, the installer keeps that directory and prints where the previous copy is; the next successful run removes every such work directory, so move the copy back before rerunning if you need it (it is a materialized copy of the bundled plugin, reproducible by reinstalling).
 
 ## User scope (all projects) with a profile
 
@@ -55,10 +55,6 @@ and `.\setup.ps1 -Status` (`-MarketplaceDir` overrides the directory);
   instructions do not say otherwise. The installer owns that file whole
   (rewritten on install, deleted on uninstall) and refuses to overwrite a file
   of that name it did not write. The text is `scripts/default-orchestration-rule.md`.
-  Installers before 1.5 kept the rule as a `claude-orchestration:managed` block
-  in the user `CLAUDE.md`; installing or removing the rule takes that block out,
-  with the blank lines the old installer put before it, and leaves the rest of
-  the file alone, or refuses without writing if the markers are damaged.
 - `--register` runs `claude plugin marketplace add` and
   `claude plugin install orchestration@orchestration-local --scope user`
   (or `enable`) only when needed, so a rerun changes nothing, and then checks
@@ -68,8 +64,7 @@ and `.\setup.ps1 -Status` (`-MarketplaceDir` overrides the directory);
   `orchestration@snaplyze-orchestration`): both register the same plugin.
   Without `--register`, run those two commands yourself.
 - `--status` prints one line per requirement, OK or TODO: the rule file is
-  current, no pre-1.5 block is left in `CLAUDE.md`, and an orchestration plugin
-  is enabled. With a local build, the build must match what this checkout
+  current, and an orchestration plugin is enabled. With a local build, the build must match what this checkout
   would write (file by file) and the plugin must be enabled from it with no
   other `orchestration` plugin enabled; without one, exactly one enabled
   `orchestration` plugin from any marketplace counts. It exits 1 while

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Installer: `--uninstall` is transactional (settings first, the plugin parked beside its place until the write is through, restored on failure) and removes an empty `settings.json`, empty `plugins/` and `.claude` directories and stray `.orchestration-*` work directories; a lock file `.orchestration.lock` in the directory being changed makes a second concurrent run refuse with one line; a rerun without `--profile` keeps a managed key you changed by hand (an explicit `--profile` applies the profile).
+- Removed: the migration of the pre-1.5 `claude-orchestration:managed` block in the user `CLAUDE.md` (written only by installers 1.4.0–1.4.1 between 2026-10-09 and 2026-10-13); if you installed one of those, delete the block by hand.
 - `runtime_smoke.py`: a transcript still being written (partial UTF-8 tail), a hook event or transcript record of an unexpected shape, or non-ASCII text on a narrow console no longer loses a paid run's results; the hook script and Claude Code's output are decoded as UTF-8 regardless of the Windows code page.
 - Orchestrate skill: the Roles section repeats the default rule's five trigger lines verbatim (`doctor.py` keeps them identical), Thorough mode no longer raises effort/model, and the skill states `subagent_type`, no `model`/`effort`, no fork; `runtime_smoke.py --skill` runs a delegating task and reports an `orchestrate skill delegation` row.
 - CI: Python 3.14 on Ubuntu; action pins carry version comments; manual runtime-smoke dispatches never cancel each other; `doctor.py` checks that `CHANGELOG.md` has the heading for the `plugin.json` version; CONTRIBUTING explains the manual smoke dispatch for Dependabot PRs.
