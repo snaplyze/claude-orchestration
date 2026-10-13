@@ -72,7 +72,8 @@ class DistributionTests(unittest.TestCase):
                                  (run(None),roles,False),(run("fork"),roles,False),(run("orchestration:worker",model="sonnet"),roles,False),(run("orchestration:worker",effort="low"),roles,False),
                                  (run(),roles,False),(run("orchestration:worker"),reviewer,False),(run("orchestration:worker","orchestration:reviewer"),reviewer,True),
                                  (run(),None,True),(run("orchestration:explorer"),None,False),(run()[1:],None,False),
-                                 ([rule,{"hook_event_name":"PreToolUse","tool_name":"Task","tool_input":{"subagent_type":"Explore"}}],None,False)):
+                                 ([rule,{"hook_event_name":"PreToolUse","tool_name":"Task","tool_input":{"subagent_type":"Explore"}}],None,False),
+                                 ([rule,{"hook_event_name":"PreToolUse","tool_name":"Agent","tool_input":"x"}],None,False),([rule,{"hook_event_name":"PreToolUse","tool_name":"Agent","tool_input":"x"}],roles,False)):
             with self.subTest(events=events,expect=expect): self.assertEqual(runtime_smoke.rule_run(events,expect)[0],ok)
         self.assertTrue(runtime_smoke.rule_run(run(),None,Path("/x/.claude"))[0]); self.assertFalse(runtime_smoke.rule_run(run(),None,Path("/elsewhere"))[0])
         self.assertEqual([runtime_smoke.check_rule_case("c",[(True,"")]*a+[(False,"")]*(3-a),roles)["ok"] for a in range(4)],[False,False,True,True])
@@ -86,8 +87,8 @@ class DistributionTests(unittest.TestCase):
             t=Path(td); hook,log=t/"hook.py",t/"hooks.jsonl"; settings=json.loads(runtime_smoke.write_settings(t,{"claudeMdExcludes":["x"]}).read_text())
             self.assertEqual((settings["claudeMdExcludes"],set(settings["hooks"])),(["x"],set(runtime_smoke.HOOK_EVENTS)))
             self.assertEqual({h["hooks"][0]["command"] for hooks in settings["hooks"].values() for h in hooks},{f'"{sys.executable}" "{hook}" "{log}"'})
-            subprocess.run([sys.executable,str(hook),str(log)],input='{"a": 1}\n',text=True,check=True)
-            self.assertEqual((log.read_text(encoding="utf-8"),runtime_smoke.load_events(log)),('{"a": 1}\n',[{"a":1}]))
+            subprocess.run([sys.executable,str(hook),str(log)],input='{"a": "Ё"}\n'.encode("utf-8"),check=True,env={**os.environ,"PYTHONIOENCODING":"cp1252"})  # a Windows code page must not touch the UTF-8 payload
+            self.assertEqual((log.read_text(encoding="utf-8"),runtime_smoke.load_events(log)),('{"a": "Ё"}\n',[{"a":"Ё"}]))
         self.assertEqual([runtime_smoke.cost_of(o) for o in ({"total_cost_usd":"1.5"},{"total_cost_usd":"x"},{},{"total_cost_usd":None})],[1.5,0.0,0.0,0.0])
     def test_runtime_smoke_fails_closed_and_keeps_partial_results(self):
         with tempfile.TemporaryDirectory() as td:
@@ -101,7 +102,7 @@ class DistributionTests(unittest.TestCase):
         got=runtime_smoke.check_capabilities([stop("explorer",runtime_smoke.NEEDLE),use("explorer","Glob"),stop("researcher","Example Domain"),use("researcher","Read")])
         self.assertEqual([r["ok"] for r in got],[True,False])
         out=io.StringIO()
-        with mock.patch.object(runtime_smoke,"run_claude",side_effect=runtime_smoke.RunFailed("budget exceeded",0.75)), mock.patch.object(sys,"argv",["smoke","--roles","explorer","--skill"]), contextlib.redirect_stdout(out):
+        with mock.patch.object(runtime_smoke,"run_claude",side_effect=runtime_smoke.RunFailed("budget exceeded",0.75)), mock.patch.object(sys,"argv",["smoke","--roles","explorer","--skill"]), contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(runtime_smoke.main(),1)
         self.assertIn("FAIL  roles",out.getvalue()); self.assertIn("FAIL  orchestrate skill",out.getvalue()); self.assertIn("cost: $1.5000",out.getvalue())
     def test_runtime_smoke_forgets_only_its_own_sessions(self):
@@ -114,6 +115,29 @@ class DistributionTests(unittest.TestCase):
                     {"hook_event_name":"SubagentStop","agent_id":"a","transcript_path":str(other/"keep.jsonl")}]
             with mock.patch.dict(os.environ,{"CLAUDE_CONFIG_DIR":str(cfg)}): removed=runtime_smoke.forget_sessions(events)
             self.assertEqual(removed,1); self.assertFalse(work.exists()); self.assertTrue((other/"keep.jsonl").exists()); self.assertTrue(outside.exists()); self.assertTrue(at_root.exists())
+    def test_runtime_smoke_skips_a_partial_utf8_line_and_settles(self):
+        with tempfile.TemporaryDirectory() as td:
+            f=Path(td)/"t.jsonl"; f.write_bytes(json.dumps({"message":{"model":"claude-opus-5-5"}}).encode()+b"\n"+b"\xe2")
+            self.assertEqual(runtime_smoke.transcript_models(str(f)),["claude-opus-5-5"])
+            with mock.patch.object(runtime_smoke.time,"sleep",wraps=runtime_smoke.time.sleep) as sleep: runtime_smoke.settle(f,timeout=5,interval=0)
+            sleep.assert_called_once_with(0)
+    def test_runtime_smoke_prints_the_table_on_a_cp1252_console(self):
+        raw=io.BytesIO(); out=io.TextIOWrapper(raw,encoding="cp1252")
+        with mock.patch.object(runtime_smoke,"run_claude",side_effect=runtime_smoke.RunFailed("ошибка",0.5)), mock.patch.object(sys,"argv",["smoke","--roles","explorer"]), mock.patch.object(sys,"stdout",out), mock.patch.object(sys,"stderr",io.StringIO()):
+            self.assertEqual(runtime_smoke.main(),1)
+        out.flush(); self.assertIn(b"FAIL  roles",raw.getvalue()); self.assertIn(b"cost: $0.5000",raw.getvalue())
+    def test_runtime_smoke_reports_unexpected_evidence_shapes_as_fail_rows(self):
+        with tempfile.TemporaryDirectory() as td:
+            f=Path(td)/"t.jsonl"; f.write_text(json.dumps({"message":"x"})+"\n")
+            roles=runtime_smoke.check_roles([{"hook_event_name":"SubagentStop","agent_type":"orchestration:explorer","effort":"high","agent_transcript_path":str(f)}],ROOT/"plugin",("explorer",))
+            self.assertEqual([r["ok"] for r in roles],[False]); self.assertIn("unexpected",roles[0]["seen"])
+            skill=runtime_smoke.check_skill([{"hook_event_name":"Stop","effort":"high","transcript_path":str(f)}],ROOT/"plugin")
+            self.assertFalse(skill["ok"]); self.assertIn("unexpected",skill["seen"])
+            self.assertFalse(runtime_smoke.check_roles([{"hook_event_name":"SubagentStop","agent_type":"orchestration:explorer","effort":{"level":"low"},"agent_transcript_path":7}],ROOT/"plugin",("explorer",))[0]["ok"])
+        out=io.StringIO()
+        with mock.patch.object(runtime_smoke,"run_claude",side_effect=AttributeError("shape")), mock.patch.object(sys,"argv",["smoke","--roles","explorer"]), contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(runtime_smoke.main(),1)
+        self.assertIn("FAIL  roles",out.getvalue()); self.assertIn("AttributeError: shape",out.getvalue()); self.assertIn("cost: $0.0000",out.getvalue())
     def test_every_profile_materializes_declared_frontmatter(self):
         for profile_path in sorted((ROOT/"profiles").glob("*.json")):
             name=profile_path.stem; declared=json.loads(profile_path.read_text())
