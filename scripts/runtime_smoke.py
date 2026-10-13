@@ -7,7 +7,7 @@ session transcripts record the model of every assistant message. Each run makes 
 from __future__ import annotations
 import argparse, json, os, shlex, shutil, subprocess, sys, tempfile, time
 from pathlib import Path
-from install import PLUGIN, RULE_FILE, RULE_TEMPLATE, claude_config_dir, frontmatter
+from install import PLUGIN, RULE_FILE, RULE_TEMPLATE, claude_config_dir, find_claude, frontmatter
 
 ROLES = ("explorer", "researcher", "worker", "tester", "reviewer")
 TASK = "Reply with the single word OK. Do not use any tools."
@@ -358,6 +358,7 @@ def main() -> int:
     parser.add_argument("--claude", default="claude")
     args = parser.parse_args()
     plugin_dir, roles = args.plugin_dir.expanduser().resolve(), [r for r in args.roles.split(",") if r]
+    claude = find_claude(args.claude) or args.claude  # the full path, so a Windows npm shim (claude.cmd) runs too
     load_dir = None if args.use_installed else plugin_dir
     unknown = set(roles) - set(ROLES)
     if unknown:
@@ -369,7 +370,7 @@ def main() -> int:
     def run(work: Path, prompt: str, model: str | None, extra: tuple = (), **kw) -> dict:
         work.mkdir(parents=True, exist_ok=True)
         try:
-            out = run_claude(args.claude, prompt, load_dir, work, args.budget, model, extra, **kw)
+            out = run_claude(claude, prompt, load_dir, work, args.budget, model, extra, **kw)
         except RunFailed as e:
             spent[0] += e.cost
             raise
@@ -459,7 +460,7 @@ def main() -> int:
             steps = [(f"/orchestration:orchestrate Economy mode. {TASK} Do not delegate.", stops(1))]
             if roles:  # interactive sessions may run subagents in the background over several turns
                 steps.append((f"Dispatch these subagents, giving each exactly this task: '{TASK}' Subagents: {names}. Do nothing else; when all have returned, reply DONE.", role_stops))
-            snapshots = run_interactive(args.claude, steps, load_dir, work, args.coordinator_model)
+            snapshots = run_interactive(claude, steps, load_dir, work, args.coordinator_model)
             checks = [check_skill(snapshots[0], plugin_dir), *(check_roles(snapshots[-1], plugin_dir, roles) if roles else [])]
             results.extend(dict(r, name=f"{r['name']} (interactive)") for r in checks)
 
