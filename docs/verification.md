@@ -15,7 +15,8 @@ sh -n setup.sh
 CI uses only standard GitHub-hosted runners. It runs the same unittest and doctor commands on `ubuntu-latest`, `macos-latest`,
 and `windows-latest`, with Python 3.12 and 3.13, plus Python 3.11 and 3.14 on Ubuntu.
 The Windows/3.13 job also installs and uninstalls through `setup.ps1` (project,
-user, and rule-only modes), and a separate Ubuntu job checks `setup.sh` syntax
+user, and rule-only modes), runs `-Status -Claude` against a stub `claude.cmd` and
+`-Status` with a PATH without python, and a separate Ubuntu job checks `setup.sh` syntax
 and runs the same smoke test. A `plugin` job installs the pinned Claude Code
 and runs `claude plugin validate --strict` on `./plugin`, the root marketplace,
 and a generated user marketplace; the validator needs no login, so that job

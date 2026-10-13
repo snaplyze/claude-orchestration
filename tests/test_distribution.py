@@ -61,7 +61,7 @@ class DistributionTests(unittest.TestCase):
             j=t/"plugin/.claude-plugin/plugin.json"; j.write_text(json.dumps({**json.loads(j.read_text()),"name":"claude-x"}))
             (t/"profiles/api-quality.json").unlink(); install.patch_frontmatter(t/"plugin/skills/orchestrate/SKILL.md",{"model":"haiku"})
             (t/"plugin/agents/extra.md").write_text("---\nname: extra\nmodel: haiku\neffort: low\n---\n")
-            p=t/"profiles/team-standard.json"; d=json.loads(p.read_text()); del d["agents"]["researcher"]; d["skill"]["model"]="haiku"; p.write_text(json.dumps(d))
+            p=t/"profiles/team-standard.json"; d=json.loads(p.read_text()); del d["agents"]["researcher"]; d["skill"]["model"]="haiku"; d["skill"]["maxTurns"]="9"; p.write_text(json.dumps(d))
             p=t/"profiles/max-5x-balanced.json"; d=json.loads(p.read_text()); p.write_text(json.dumps({**d,"settings":{"model":"opus","effortLevel":"high"}}))  # the pre-1.6 key
             install.patch_frontmatter(t/"plugin/agents/researcher.md",{"description":"a\u2028model: evil"})
             errors=doctor.check(t)
@@ -72,7 +72,7 @@ class DistributionTests(unittest.TestCase):
             self.assertTrue(any("must name exactly the roles" in e and "'qa'" in e for e in errors),errors)
             for message in ("marketplace.json must list only orchestration from ./plugin","duplicate row pro-economy","row pro-legacy has no profile","plugin name 'claude-x' is reserved","expected 8 profiles, found 7",
                             "SKILL.md: unsupported model 'haiku'","plugin agents must be exactly","team-standard.json: incomplete agents","team-standard.json skill: unsupported model 'haiku'",
-                            "max-5x-balanced.json: invalid schema","researcher.md: control or separator character in description"):
+                            "max-5x-balanced.json: invalid schema","researcher.md: control or separator character in description","team-standard.json skill: keys must be model and effort"):
                 self.assertTrue(any(message in e for e in errors),(message,errors))
             self.assertFalse(any("researcher.md: unsupported model" in e for e in errors),errors)  # the separator stays inside the description value
     def test_runtime_smoke_judges_hook_and_transcript_evidence(self):
@@ -441,4 +441,107 @@ class DistributionTests(unittest.TestCase):
             bad=install.profile_data("pro-economy"); bad["agents"]["worker"]="sonnet"
             with mock.patch.object(install,"profile_data",return_value=bad), self.assertRaisesRegex(ValueError,"invalid agent profile"): install.install(t,"pro-economy")
             self.assertEqual((t/".claude/settings.json").read_bytes(),before); self.assertEqual(frontmatter(t/".claude/plugins/orchestration/agents/worker.md")["effort"],"high")
+    def test_empty_profile_name_refreshes_like_none(self):
+        with tempfile.TemporaryDirectory() as td:
+            t=Path(td).resolve(); install.install(t,"max-20x-thorough"); before=(t/".claude/settings.json").read_bytes(); install.install(t,"")
+            self.assertEqual(((t/".claude/settings.json").read_bytes(),frontmatter(t/".claude/plugins/orchestration/skills/orchestrate/SKILL.md")["effort"]),(before,"xhigh"))
+            code,out,err=self.cli(str(t),"--profile",""); self.assertEqual((code,out),(2,"")); self.assertIn("error: argument --profile: empty profile name",err); self.assertEqual((t/".claude/settings.json").read_bytes(),before)
+    def test_damaged_marker_is_refused_in_one_line(self):
+        with tempfile.TemporaryDirectory() as td:
+            t=Path(td).resolve(); (t/".claude").mkdir(); s=t/".claude/settings.json"; M=install.MARKER
+            for marker in ({"profile":["x"],"managedKeys":[]},{"profile":"p","managedKeys":5},{"profile":"p","managedKeys":"model"},{"profile":"p","managedKeys":[1]},{"profile":"p","managedKeys":[],"previous":7},{"profile":"p","managedKeys":[],"applied":[]},"old",{"managedKeys":[]}):
+                raw=json.dumps({"x":1,M:marker}).encode(); s.write_bytes(raw)
+                for argv in ((str(t),"--profile","pro-balanced"),(str(t),),(str(t),"--uninstall")):
+                    with self.subTest(marker=marker,argv=argv):
+                        self.assertEqual(self.cli(*argv),(1,"",f"error: damaged claude-orchestration marker in {s}; remove it by hand\n"))
+                        self.assertEqual((s.read_bytes(),[p.name for p in (t/".claude").iterdir()]),(raw,["settings.json"]))
+    def test_profile_with_unknown_keys_or_newlines_is_rejected_before_any_write(self):
+        with tempfile.TemporaryDirectory() as td:
+            t=Path(td).resolve(); profiles=t/"profiles"; shutil.copytree(ROOT/"profiles",profiles); p=profiles/"pro-balanced.json"; good=json.loads(p.read_text())
+            cases={"extra skill key":{"skill":{**good["skill"],"maxTurns":"999"}},"newline in effort":{"skill":{"model":"opus","effort":"low\nmaxTurns: 999"}},"newline in agent effort":{"agents":{**good["agents"],"worker":["sonnet","high\nx: 1"]}},
+                   "non-string model":{"skill":{"model":["opus"],"effort":"high"}},"unknown agent":{"agents":{**good["agents"],"../x":["sonnet","high"]}},"skill not an object":{"skill":"opus"},"agent pair":{"agents":{**good["agents"],"worker":"sonnet"}},"haiku skill":{"skill":{"model":"haiku","effort":"high"}}}
+            for case,change in cases.items():
+                with self.subTest(case=case), mock.patch.object(install,"PROFILES",profiles):
+                    p.write_text(json.dumps({**good,**change})); code,out,err=self.cli(str(t),"--profile","pro-balanced")
+                    self.assertEqual((code,out,len(err.splitlines())),(1,"",1),err); self.assertTrue(err.startswith("error: invalid profile"),err); self.assertEqual([x.name for x in t.iterdir()],["profiles"])
+                    with self.assertRaisesRegex(ValueError,"invalid profile"): install.install_user(t/"mkt","pro-balanced")
+                    self.assertFalse((t/"mkt").exists())
+    def test_unexpected_cli_listing_shapes_are_one_line_errors(self):
+        with tempfile.TemporaryDirectory() as td:
+            t=Path(td).resolve(); cfg=t/"cfg"; mkt=t/"mkt"; install.set_rule(cfg,True); env=mock.patch.dict(os.environ,{"CLAUDE_CONFIG_DIR":str(cfg)})
+            for shape,bad in (({"marketplaces":[]},"list"),([{"scope":"user"},5],"list"),({"marketplaces":[]},"marketplace list"),([{"name":"x"},"y"],"marketplace list")):
+                stub=lambda cmd,**kw: subprocess.CompletedProcess(cmd,0,json.dumps(shape if " ".join(cmd[2:-1])==bad else [])+"\n","")
+                with self.subTest(shape=shape,bad=bad), env, mock.patch.object(install,"run_cli",stub):
+                    code,out,err=self.cli("--status","--marketplace-dir",str(mkt),"--claude",sys.executable)
+                    self.assertEqual((code,out.splitlines()[-1:],err),(1,[],f"error: claude plugin {bad} --json did not return a list of objects\n") if bad=="list" else (1,["TODO  no orchestration plugin is enabled (install it from a marketplace, or use --user --register)"],""))  # status never lists marketplaces
+                    code,out,err=self.cli("--user","--profile","pro-balanced","--register","--marketplace-dir",str(mkt),"--claude",sys.executable)
+                    self.assertEqual((code,err.splitlines()),(1,[f"build kept at {mkt}; rerun with --register",f"error: claude plugin {bad} --json did not return a list of objects"])); self.assertTrue((mkt/"plugin").is_dir()); shutil.rmtree(mkt)
+    def test_ignored_flag_combinations_are_usage_errors(self):
+        with tempfile.TemporaryDirectory() as td, mock.patch.dict(os.environ,{"CLAUDE_CONFIG_DIR":str(Path(td)/"cfg")}):
+            t=Path(td).resolve()
+            for argv,message in ((("--status","--default-rule"),"--status runs alone"),((str(t),"--uninstall","--profile","pro-balanced"),"--uninstall takes no --profile"),(("--user","--uninstall","--profile","pro-balanced"),"--uninstall takes no --profile"),
+                                 ((str(t),"--profile","pro-balanced","--marketplace-dir",str(t/"m")),"--marketplace-dir needs --user or --status"),(("--default-rule","--profile","pro-balanced"),"--default-rule alone takes no --profile")):
+                with self.subTest(argv=argv): code,out,err=self.cli(*argv); self.assertEqual((code,out),(2,"")); self.assertIn(f"error: {message}",err); self.assertEqual(list(t.iterdir()),[])
+    def test_rule_refuses_a_symlinked_rules_directory_and_status_reports_links(self):
+        with tempfile.TemporaryDirectory() as td:
+            t=Path(td).resolve(); cfg=t/"cfg"; cfg.mkdir(); ext=t/"ext"; ext.mkdir(); real=ext/"claude-orchestration.md"; real.write_bytes(install.RULE_HEADER+(ROOT/"scripts/default-orchestration-rule.md").read_bytes())
+            try: (cfg/"rules").symlink_to(ext,target_is_directory=True)
+            except OSError: self.skipTest("symlink unavailable")
+            for action in (lambda: install.set_rule(cfg,True),lambda: install.set_rule(cfg,False),lambda: install.install_user(t/"mkt","pro-balanced",cfg)):
+                with self.assertRaisesRegex(ValueError,"refusing symlink: .*rules$"): action()
+            self.assertEqual(([p.name for p in ext.iterdir()],(t/"mkt").exists()),(["claude-orchestration.md"],False))
+            env=mock.patch.dict(os.environ,{"CLAUDE_CONFIG_DIR":str(cfg)}); line=f"TODO  rule {cfg/'rules/claude-orchestration.md'}: symlink (refused)"
+            with env: code,out,err=self.cli("--status","--marketplace-dir",str(t/"mkt"),"--claude",str(t/"none"))
+            self.assertEqual((code,err,out.splitlines()[0]),(1,"",line))
+            (cfg/"rules").unlink(); (cfg/"rules").mkdir(); (cfg/"rules/claude-orchestration.md").symlink_to(real)
+            with env: code,out,err=self.cli("--status","--marketplace-dir",str(t/"mkt"),"--claude",str(t/"none"))
+            self.assertEqual((code,err,out.splitlines()[0]),(1,"",line)); self.assertEqual(real.read_bytes(),install.RULE_HEADER+(ROOT/"scripts/default-orchestration-rule.md").read_bytes())
+    def test_marketplace_directory_may_not_lie_in_the_rules_directory(self):
+        with tempfile.TemporaryDirectory() as td:
+            t=Path(td).resolve(); cfg=t/"cfg"; env=mock.patch.dict(os.environ,{"CLAUDE_CONFIG_DIR":str(cfg)})
+            for root in (cfg/"rules",cfg/"rules/mkt"):
+                for action in (lambda: install.install_user(root,"pro-balanced",cfg),lambda: install.install_user(root,"pro-balanced"),lambda: install.uninstall_user(root,cfg),lambda: install.marketplace_dir(root,cfg)):
+                    with self.subTest(root=root), env, self.assertRaises(ValueError) as cm: action()
+                    self.assertIn(f"must not be inside {cfg/'rules'}",str(cm.exception))
+                with env: code,out,err=self.cli("--user","--profile","pro-balanced","--marketplace-dir",str(root))
+                self.assertEqual((code,out,err.startswith("error: marketplace directory must not be inside")),(1,"",True),err)
+            self.assertFalse(cfg.exists())
+            with env: install.install_user(t/"rules","pro-balanced",cfg)  # a sibling named rules is fine
+            with mock.patch.dict(os.environ,{"CLAUDE_CONFIG_DIR":str(t/"other")}): install.install_user(cfg/"rules/mkt","pro-balanced")  # built before the config directory moved here: status refuses, writes refuse
+            with env: code,out,err=self.cli("--status","--marketplace-dir",str(cfg/"rules/mkt"),"--claude",str(t/"none"))
+            self.assertEqual((code,err),(1,"")); self.assertIn(f"TODO  marketplace {cfg/'rules/mkt'}: inside {cfg/'rules'} (refused)",out)
+    def test_status_lists_plugins_only_and_reports_a_foreign_directory(self):
+        with tempfile.TemporaryDirectory() as td:
+            t=Path(td).resolve(); cfg=t/"cfg"; mkt=t/"mkt"; calls=[]; stub=lambda claude,*a: calls.append(" ".join(a)) or []
+            install.install_user(mkt,"pro-balanced",cfg)
+            with mock.patch.object(install,"claude_json",stub): checks=install.status(["claude"],mkt,cfg)
+            self.assertEqual((calls,[ok for ok,_ in checks]),(["list"],[True,True,False])); self.assertIn("profile max-5x-balanced or pro-balanced, matches this checkout",checks[1][1])  # one topology, both names
+            self.assertEqual(install.build("pro-balanced"),install.tree(mkt/"plugin")); self.assertEqual(set(install.build(None)),set(install.tree(ROOT/"plugin"))); self.assertNotEqual(install.build("team-premium"),install.build("pro-balanced"))
+            foreign=t/"foreign"; foreign.mkdir(); (foreign/"notes.txt").write_text("x"); link=t/"link"
+            with mock.patch.dict(os.environ,{"CLAUDE_CONFIG_DIR":str(cfg)}), mock.patch.object(install,"claude_json",stub): code,out,err=self.cli("--status","--marketplace-dir",str(foreign),"--claude",sys.executable)
+            self.assertEqual((code,err),(1,"")); self.assertIn(f"TODO  marketplace {foreign}: not built by this installer (pass another --marketplace-dir)",out); self.assertEqual([p.name for p in foreign.iterdir()],["notes.txt"])
+            try: link.symlink_to(mkt,target_is_directory=True)
+            except OSError: self.skipTest("symlink unavailable")
+            with mock.patch.dict(os.environ,{"CLAUDE_CONFIG_DIR":str(cfg)}), mock.patch.object(install,"claude_json",stub): code,out,err=self.cli("--status","--marketplace-dir",str(link),"--claude",sys.executable)
+            self.assertEqual((code,err),(1,"")); self.assertIn(f"TODO  marketplace {link}: symlink (refused)",out)
+    def test_failed_registration_keeps_the_build_and_says_so(self):
+        with tempfile.TemporaryDirectory() as td:
+            t=Path(td).resolve(); mkt=t/"mkt"; cfg=t/"cfg"
+            with mock.patch.dict(os.environ,{"CLAUDE_CONFIG_DIR":str(cfg)}): code,out,err=self.cli("--user","--profile","pro-balanced","--default-rule","--register","--marketplace-dir",str(mkt),"--claude","/nonexistent")
+            self.assertEqual((code,err),(1,f"build kept at {mkt}; rerun with --register\nerror: claude CLI not found; pass --claude <path to the executable>\n")); self.assertTrue(out.startswith("Built local marketplace"),out)
+            self.assertTrue((mkt/"plugin/.claude-plugin/plugin.json").is_file()); self.assertTrue((cfg/"rules/claude-orchestration.md").is_file())
+            with mock.patch.dict(os.environ,{"CLAUDE_CONFIG_DIR":str(cfg)}): code,out,err=self.cli("--user","--uninstall","--register","--marketplace-dir",str(mkt),"--claude","/nonexistent")
+            self.assertEqual((code,out,err),(1,"","error: claude CLI not found; pass --claude <path to the executable>\n")); self.assertTrue((mkt/"plugin").is_dir())
+    def test_find_claude_takes_only_absolute_hits_for_bare_names(self):
+        with tempfile.TemporaryDirectory() as td:
+            t=Path(td).resolve(); exe=t/("claude.cmd" if os.name=="nt" else "claude"); exe.write_text("#!/bin/sh\n"); exe.chmod(0o755); cwd=os.getcwd()
+            with mock.patch.dict(os.environ,{"PATH":str(t)}): self.assertEqual(os.path.normcase(install.find_claude("claude")),os.path.normcase(str(exe)))  # an absolute PATH hit, from another directory (Windows: PATHEXT case)
+            os.chdir(t)
+            try:
+                with mock.patch.dict(os.environ,{"PATH":os.curdir}): self.assertIsNone(install.find_claude("claude"))  # a relative PATH entry, like Windows' implicit current directory, does not count
+                if os.name=="nt":
+                    with mock.patch.dict(os.environ,{"PATH":str(t)}): self.assertIsNone(install.find_claude("claude"))  # Windows which() looks in the current directory first and returns a relative path
+            finally: os.chdir(cwd)
+            self.assertEqual(install.find_claude(str(exe)),str(exe)); self.assertIsNone(install.find_claude(str(t/"missing")))
+            with mock.patch.dict(os.environ,{"PATH":str(t)}): self.assertIsNone(install.find_claude("missing"))
 if __name__=="__main__": unittest.main()
