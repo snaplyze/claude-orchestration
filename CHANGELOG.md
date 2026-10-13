@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.6.0 — 2026-10-13
 
 - Installer: a blank `--profile` refreshes the installed profile; a damaged `claude-orchestration` marker, an unexpected `claude plugin … --json` shape, or a profile with unknown keys or control characters stop with one line before any write; ignored flag combinations are usage errors; `setup.ps1` gains `-Claude`, strict mode and a python check; a bare `--claude` name is never resolved from the current directory; a symlinked `rules/` directory and a marketplace directory inside `rules/` are refused; `--status` no longer lists marketplaces (one `claude` call instead of two), reports a foreign directory as a TODO line and names every profile whose topology the build matches; a failed `--register` says the build is kept.
 - Installer: frontmatter keys are read only at column 0 (an indented continuation line or a Unicode line separator inside a value can no longer inject a key), and a patched file keeps every line ending it had; `doctor.py` rejects control and line-separator characters in shipped frontmatter values.
