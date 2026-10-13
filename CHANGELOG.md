@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Agent rules: `AGENTS.md` keeps only the project facts ("Сведения о проекте": commands, invariants, traps, plan, CI and orchestration lines, owner decisions); the general unified policy v15 block is removed because task prompts carry the general rules. Claude Code ≥ 2.1.277 reads it natively while no `CLAUDE.md` exists.
+
 ## 1.5.0 — 2026-10-13
 
 - Default rule rewritten as concrete triggers per role (unfamiliar multi-file code → explorer, current external facts → researcher, independent implementation units → worker, reproduction and verification → tester, a material change before "done" → reviewer); it states that it applies in every repository, including ones without agent rules, ranks the roles above the built-in Explore/Plan/general-purpose agents, is for the main session only, and forbids `model`/`effort` overrides and forks for the roles. Agent descriptions gain "use proactively" cues. Measured with the new `--default-rule` smoke on Claude Code 2.1.296 (see `docs/verification.md`).
