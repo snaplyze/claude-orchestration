@@ -21,7 +21,7 @@ JUNCTION = 0xA0000003  # IO_REPARSE_TAG_MOUNT_POINT
 def load_json(path: Path) -> dict:
     if not path.exists():
         return {}
-    data = json.loads(path.read_text(encoding="utf-8"))
+    data = json.loads(path.read_text(encoding="utf-8-sig"))
     if not isinstance(data, dict):
         raise ValueError(f"{path} must contain a JSON object")
     return data
@@ -87,16 +87,23 @@ def profile_data(name: str) -> dict:
 
 
 def split_frontmatter(text: str, path: Path) -> tuple[list[str], str]:
-    """Return the YAML frontmatter lines and the body that follows the closing delimiter."""
-    parts = text.split("---", 2)
-    if len(parts) != 3 or parts[0].strip():
-        raise ValueError(f"missing YAML frontmatter: {path}")
-    return parts[1].strip("\n").splitlines(), parts[2]
+    """Return the YAML frontmatter lines and the body after the closing `---` line."""
+    lines = text.splitlines(keepends=True)
+    if lines and lines[0].strip() == "---":
+        for i, line in enumerate(lines[1:], 1):
+            if line.strip() == "---":
+                return [line.rstrip("\r\n") for line in lines[1:i]], "".join(lines[i + 1:])
+    raise ValueError(f"missing YAML frontmatter: {path}")
+
+
+def unquote(value: str) -> str:
+    value = value.strip()
+    return value[1:-1] if len(value) > 1 and value[0] == value[-1] and value[0] in "\"'" else value
 
 
 def frontmatter(path: Path) -> dict[str, str]:
     lines, _ = split_frontmatter(path.read_text(encoding="utf-8"), path)
-    return {k.strip(): v.strip() for k, v in (line.split(":", 1) for line in lines if ":" in line)}
+    return {k.strip(): unquote(v) for k, v in (line.split(":", 1) for line in lines if ":" in line)}
 
 
 def patch_frontmatter(path: Path, values: dict[str, str]) -> None:
@@ -110,7 +117,7 @@ def patch_frontmatter(path: Path, values: dict[str, str]) -> None:
         else:
             output.append(line)
     output += [f"{key}: {value}" for key, value in values.items() if key not in seen]
-    path.write_text("---\n" + "\n".join(output) + "\n---" + body, encoding="utf-8")
+    path.write_text("---\n" + "\n".join(output) + "\n---\n" + body, encoding="utf-8")
 
 
 def materialize_profile(stage: Path, profile: dict) -> None:
@@ -122,12 +129,16 @@ def materialize_profile(stage: Path, profile: dict) -> None:
 
 
 def release_settings(settings: dict) -> bool:
-    """Remove the marker and give managed keys back their pre-install values. Return True if a marker was present."""
+    """Remove the marker and give managed keys back their pre-install values, except a key the user changed after
+    install (markers before 1.5 do not record the applied values, so their keys are always restored).
+    Return True if a marker was present."""
     marker = settings.pop(MARKER, None)
     if not isinstance(marker, dict):
         return marker is not None
-    previous = marker.get("previous", {})
+    previous, applied = marker.get("previous", {}), marker.get("applied")
     for key in marker.get("managedKeys", []):
+        if isinstance(applied, dict) and settings.get(key) != applied.get(key):
+            continue
         if key in previous:
             settings[key] = previous[key]
         else:
@@ -140,16 +151,18 @@ def apply_settings(settings: dict, name: str, profile: dict) -> None:
     fragment = profile["settings"]
     previous = {key: settings[key] for key in fragment if key in settings}
     settings.update(fragment)
-    settings[MARKER] = {"profile": name, "managedKeys": sorted(fragment), "previous": previous}
+    settings[MARKER] = {"profile": name, "managedKeys": sorted(fragment), "previous": previous, "applied": dict(fragment)}
 
 
 def plugin_destination(target: Path) -> Path:
-    """Return the managed plugin path, refusing links anywhere between the target and it."""
+    """Return the managed plugin path, refusing links anywhere between the target and it, and at settings.json."""
     path = target
     for part in (".claude", "plugins", "orchestration"):
         path = path / part
         if is_link(path):
             raise ValueError(f"refusing symlink in plugin destination: {path}")
+    if is_link(target / ".claude/settings.json"):
+        raise ValueError(f"refusing symlink: {target / '.claude/settings.json'}")
     return path
 
 

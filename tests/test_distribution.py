@@ -90,6 +90,16 @@ class DistributionTests(unittest.TestCase):
                 s=self.settings(t); self.assertEqual((s["model"],s["effortLevel"],s["claude-orchestration"]["profile"]),("opus","xhigh","max-20x-thorough"))
                 self.assertEqual(frontmatter(t/".claude/plugins/orchestration/agents/reviewer.md")["effort"],"xhigh")
                 install.uninstall(t); self.assertEqual(self.settings(t),original); self.assertFalse((t/".claude/plugins/orchestration").exists())
+    def test_uninstall_keeps_managed_keys_the_user_changed(self):
+        with tempfile.TemporaryDirectory() as td:
+            t=Path(td); (t/".claude").mkdir(); (t/".claude/settings.json").write_bytes(b"\xef\xbb\xbf"+json.dumps({"model":"sonnet","x":1}).encode())
+            install.install(t,"pro-balanced"); s=self.settings(t); s["model"]="haiku"; (t/".claude/settings.json").write_text(json.dumps(s))
+            install.uninstall(t); self.assertEqual(self.settings(t),{"model":"haiku","x":1})
+    def test_frontmatter_parses_delimiter_lines_and_quoted_values(self):
+        with tempfile.TemporaryDirectory() as td:
+            f=Path(td)/"a.md"; f.write_text('---\nname: a\ndescription: x --- y\nmodel: "opus"\neffort: \'high\'\n---\nbody --- text\n')
+            self.assertEqual({k:frontmatter(f)[k] for k in ("description","model","effort")},{"description":"x --- y","model":"opus","effort":"high"})
+            install.patch_frontmatter(f,{"model":"sonnet","effort":"low"}); self.assertEqual(f.read_text(),"---\nname: a\ndescription: x --- y\nmodel: sonnet\neffort: low\n---\nbody --- text\n")
     def test_uninstall_accepts_marker_without_previous_values(self):
         with tempfile.TemporaryDirectory() as td:
             t=Path(td); (t/".claude").mkdir(); (t/".claude/settings.json").write_text(json.dumps({"model":"opus","x":1,"claude-orchestration":{"profile":"pro-balanced","managedKeys":["model"]}}))
@@ -222,15 +232,35 @@ class DistributionTests(unittest.TestCase):
             self.assertEqual([line.split(": ",1)[-1] for ok,line in install.status(None,mkt,cfg) if not ok],["outdated","still holds the pre-1.5 managed block (rerun with --default-rule)","registration not checked"])
     def test_symlinks_and_unknown_profile_names_rejected(self):
         with tempfile.TemporaryDirectory() as td:
-            t=Path(td)/"project"; ext=Path(td)/"external"; t.mkdir(); ext.mkdir(); (t/".claude").mkdir()
-            for link in (t/".claude/plugins", t/".claude/plugins/orchestration"):
-                link.parent.mkdir(parents=True,exist_ok=True)
-                try: link.symlink_to(ext,target_is_directory=True)
+            t=Path(td)/"project"; ext=Path(td)/"external"; t.mkdir(); ext.mkdir()
+            with self.assertRaisesRegex(ValueError,"unknown profile"): install.install(t,"../.claude-plugin/marketplace")
+            for target in (ROOT,ROOT/"tests"):
+                with self.assertRaisesRegex(ValueError,"outside the distribution checkout"): install.install(target,"pro-balanced")
+            self.assertFalse((ROOT/".claude").exists())
+            for rel in (".claude",".claude/plugins",".claude/plugins/orchestration",".claude/settings.json"):
+                link=t/rel; link.parent.mkdir(parents=True,exist_ok=True)
+                try: link.symlink_to(ext/"settings.json" if rel.endswith(".json") else ext,target_is_directory=not rel.endswith(".json"))
                 except OSError: self.skipTest("symlink unavailable")
-                with self.subTest(link=link.name):
-                    for action in (install.install,install.uninstall):
-                        with self.assertRaisesRegex(ValueError,"symlink"): action(t)
+                with self.subTest(link=rel):
+                    for action in (lambda: install.install(t,"pro-balanced"),lambda: install.uninstall(t)):
+                        with self.assertRaisesRegex(ValueError,"symlink"): action()
                     self.assertTrue(link.is_symlink()); self.assertEqual(list(ext.iterdir()),[])
                 link.unlink()
-            with self.assertRaisesRegex(ValueError,"unknown profile"): install.install(t,"../.claude-plugin/marketplace")
+            shutil.rmtree(t/".claude")
+    @unittest.skipUnless(os.name=="nt","Windows junctions")
+    def test_windows_junctions_rejected(self):
+        with tempfile.TemporaryDirectory() as td:
+            t=Path(td)/"project"; ext=Path(td)/"external"; (t/".claude").mkdir(parents=True); ext.mkdir()
+            subprocess.run(["cmd","/c","mklink","/J",str(t/".claude/plugins"),str(ext)],check=True,capture_output=True)
+            self.assertFalse((t/".claude/plugins").is_symlink()); self.assertTrue(install.is_link(t/".claude/plugins"))
+            with self.assertRaisesRegex(ValueError,"symlink"): install.install(t,"pro-balanced")
+            subprocess.run(["cmd","/c","mklink","/J",str(Path(td)/"mkt"),str(ext)],check=True,capture_output=True)
+            with self.assertRaisesRegex(ValueError,"symlink"): install.install_user(Path(td)/"mkt","pro-balanced")
+            self.assertEqual(list(ext.iterdir()),[])
+    def test_malformed_agent_pair_aborts_before_any_change(self):
+        with tempfile.TemporaryDirectory() as td:
+            t=Path(td).resolve(); self.assertEqual(self.run_install(t,"--profile","pro-balanced").returncode,0); before=(t/".claude/settings.json").read_bytes()
+            bad=install.profile_data("pro-economy"); bad["agents"]["worker"]="sonnet"
+            with mock.patch.object(install,"profile_data",return_value=bad), self.assertRaisesRegex(ValueError,"invalid agent profile"): install.install(t,"pro-economy")
+            self.assertEqual((t/".claude/settings.json").read_bytes(),before); self.assertEqual(frontmatter(t/".claude/plugins/orchestration/agents/worker.md")["effort"],"high")
 if __name__=="__main__": unittest.main()
