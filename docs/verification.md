@@ -106,7 +106,8 @@ still printed.
 ### Runtime smoke in CI
 
 `.github/workflows/runtime-smoke.yml` runs the headless modes on GitHub-hosted
-Ubuntu with Claude Code pinned to 2.1.296: on manual dispatch and on
+Ubuntu, Windows and macOS (one job per OS, Git Bash on Windows) with Claude Code
+pinned to 2.1.296: on manual dispatch and on
 same-repository PRs that touch `plugin/`, `profiles/`, the installer, the rule,
 or the smoke script. A new push to a PR cancels its superseded run; every
 manual dispatch has a group of its own, so two dispatches on `main` never cancel
