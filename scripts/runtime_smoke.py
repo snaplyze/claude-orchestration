@@ -11,6 +11,7 @@ from install import PLUGIN, frontmatter
 
 ROLES = ("explorer", "researcher", "worker", "tester", "reviewer")
 TASK = "Reply with the single word OK. Do not use any tools."
+SKILL_TASK = f"/orchestration:orchestrate Normal mode. Delegate exactly this task to orchestration:explorer: '{TASK}' Then reply DONE."
 READ_ONLY = ("explorer", "researcher")  # no write tools in frontmatter
 NO_WRITE_BY_INSTRUCTION = ("reviewer",)  # keeps Bash; its no-write rule is behavioral
 WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit", "Bash", "PowerShell"}
@@ -207,19 +208,35 @@ def agent_calls(events: list[dict]) -> list[dict]:
             if e.get("hook_event_name") == "PreToolUse" and e.get("tool_name") in ("Agent", "Task") and "agent_id" not in e]
 
 
+def delegations(events: list[dict]) -> tuple[list[str], list[str], str]:
+    """The subagent_type of each main-session Agent call ("general-purpose" when absent), the model/effort keys any
+    orchestration role was called with, and a one-line summary of both. "Task" is the Agent tool's former name."""
+    calls = agent_calls(events)
+    types = [str(c.get("subagent_type") or "general-purpose") for c in calls]
+    overrides = sorted({k for c, t in zip(calls, types) if t.startswith("orchestration:") for k in ("model", "effort") if c.get(k)})
+    seen = (",".join(t.removeprefix("orchestration:") for t in types) or "no Agent call") + (f" (overrides {','.join(overrides)})" if overrides else "")
+    return types, overrides, seen
+
+
 def rule_run(events: list[dict], expect: frozenset | None, source: Path | None = None) -> tuple[bool, str]:
     """Judge one --default-rule run. The rule must be loaded (from under source, when given); then, with expect None,
     no Agent call at all; otherwise only orchestration roles, including every role in expect, without model/effort
-    overrides. "Task" is the Agent tool's former name."""
+    overrides."""
     loaded = [Path(str(e.get("file_path") or "")) for e in events if e.get("hook_event_name") == "InstructionsLoaded"]
     if not any(p.name == RULE_FILE and (source is None or p.resolve().is_relative_to(source.resolve())) for p in loaded):
         return False, "rule not loaded" + (f" from {source}" if source else "")
-    calls = agent_calls(events)
-    types = [str(c.get("subagent_type") or "general-purpose") for c in calls]
-    roles = [c for c, t in zip(calls, types) if t.startswith("orchestration:")]
-    overrides = sorted({k for c in roles for k in ("model", "effort") if c.get(k)})
-    ok = not calls if expect is None else len(roles) == len(calls) > 0 and expect <= set(types) and not overrides
-    return ok, (",".join(t.removeprefix("orchestration:") for t in types) or "no Agent call") + (f" (overrides {','.join(overrides)})" if overrides else "")
+    types, overrides, seen = delegations(events)
+    roles = [t for t in types if t.startswith("orchestration:")]
+    ok = not types if expect is None else len(roles) == len(types) > 0 and expect <= set(types) and not overrides
+    return ok, seen
+
+
+def check_skill_delegation(events: list[dict]) -> dict:
+    """The skill run must delegate as the skill says: at least one Agent call from the main session, every one to an
+    orchestration: role, none with a model or effort override."""
+    types, overrides, seen = delegations(events)
+    ok = bool(types) and all(t.startswith("orchestration:") for t in types) and not overrides
+    return {"name": "orchestrate skill delegation", "want": "roles only", "seen": seen + (", no overrides" if ok else ""), "ok": ok}
 
 
 def check_rule_case(name: str, runs: list[tuple[bool, str]], expect: frozenset | None) -> dict:
@@ -328,7 +345,7 @@ def main() -> int:
     parser.add_argument("--plugin-dir", type=Path, default=PLUGIN, help="plugin directory to test (default: bundled plugin/)")
     parser.add_argument("--use-installed", action="store_true", help="test the plugin Claude Code already has installed (no --plugin-dir); --plugin-dir then names its files for the expected values")
     parser.add_argument("--roles", default=",".join(ROLES), help="comma-separated roles to dispatch")
-    parser.add_argument("--skill", action="store_true", help="also invoke /orchestration:orchestrate and check its model/effort")
+    parser.add_argument("--skill", action="store_true", help="also invoke /orchestration:orchestrate with a task that delegates to explorer and check its model/effort and that it delegates to the roles without overrides")
     parser.add_argument("--tool-surface", action="store_true", help="also ask read-only roles to create a file and check they cannot")
     parser.add_argument("--capabilities", action="store_true", help="also check that explorer can search (finds a hidden file) and researcher can fetch a web page")
     parser.add_argument("--agent-path", action="store_true", help="also start each role as the session agent (claude --agent) and check its model/effort")
@@ -378,8 +395,9 @@ def main() -> int:
 
         def skill():
             work = Path(td) / "skill"
-            run(work, f"/orchestration:orchestrate Economy mode. {TASK} Do not delegate.", args.coordinator_model)
-            results.append(check_skill(load_events(work / "hooks.jsonl"), plugin_dir))
+            run(work, SKILL_TASK, args.coordinator_model)
+            events = load_events(work / "hooks.jsonl")
+            results.extend([check_skill(events, plugin_dir), check_skill_delegation(events)])
 
         def tool_surface():
             work = Path(td) / "tools"

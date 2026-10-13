@@ -17,7 +17,7 @@ What each runtime mode proves is in [verification](docs/verification.md); the ta
 
 The workflows pin Claude Code (`npm install --global @anthropic-ai/claude-code@<version>` in `ci.yml` and `runtime-smoke.yml`). When you re-verify on a newer client, bump both pins and the "tested on" version in the README together.
 
-`runtime_smoke.py` makes real model calls under your Claude login. In CI the `Runtime smoke` workflow runs it only for runs the repository owner authored and started, because it uses the owner's subscription token.
+`runtime_smoke.py` makes real model calls under your Claude login. In CI the `Runtime smoke` workflow runs it only for runs the repository owner authored and started, because it uses the owner's subscription token. A Dependabot PR that touches `runtime-smoke.yml` therefore skips it even when the owner re-runs it (the original actor stays `dependabot[bot]`); the owner dispatches it by hand on the PR branch: `gh workflow run runtime-smoke.yml --ref <branch>`.
 
 ## Pull requests
 
@@ -25,7 +25,7 @@ Open an issue first for anything beyond a small fix, then a PR against `main` us
 
 ## Releases
 
-1. Bump `version` in `plugin/.claude-plugin/plugin.json` and rename `Unreleased` in `CHANGELOG.md` to the version and date.
+1. Bump `version` in `plugin/.claude-plugin/plugin.json` and rename `Unreleased` in `CHANGELOG.md` to the version and date; `doctor.py` checks that the changelog has `## <version> — <date>` for the `plugin.json` version with nothing but `Unreleased` above it.
 2. Merge the release PR after CI and the runtime smoke pass.
 3. Tag the merge commit `vX.Y.Z` and publish a GitHub Release with the changelog section.
 4. Update a user-scope install with `python scripts/install.py --user --profile <profile> --default-rule --register`, confirm `install.py --status`, and check it with `runtime_smoke.py --use-installed`.

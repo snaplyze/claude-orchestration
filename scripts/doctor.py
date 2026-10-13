@@ -14,6 +14,8 @@ RESERVED_NAMES = {"claude", "anthropic", "anthropics", "claude-code", "claude-mo
 PROFILE_COUNT = 8
 MARKETPLACE_PROFILE = "pro-balanced"
 ROLE_ORDER = ("explorer", "researcher", "worker", "tester", "reviewer")
+RULE_DOC, SKILL_DOC = "scripts/default-orchestration-rule.md", "plugin/skills/orchestrate/SKILL.md"
+ROLE_LINE = re.compile(r"^- `orchestration:(?:explorer|researcher|worker|tester|reviewer)`: .*$", re.M)  # the rule's trigger lines
 
 
 def reserved_name(name: str) -> bool:
@@ -32,11 +34,13 @@ def pair_errors(where: str, model, effort, models=MODELS) -> list[str]:
 
 
 def check(root: Path = R) -> list[str]:
-    errors = []
+    errors, version = [], None
     try:
-        name = json.loads((root / "plugin/.claude-plugin/plugin.json").read_text(encoding="utf-8")).get("name", "")
+        manifest = json.loads((root / "plugin/.claude-plugin/plugin.json").read_text(encoding="utf-8"))
+        name, version = manifest.get("name", ""), manifest.get("version")
         if name != "orchestration": errors.append("plugin name must be orchestration")
         if reserved_name(name): errors.append(f"plugin name {name!r} is reserved")
+        errors += changelog_errors(root, version)
     except Exception as e: errors.append(f"manifest: {e}")
     try:
         market = json.loads((root / ".claude-plugin/marketplace.json").read_text(encoding="utf-8"))
@@ -73,10 +77,25 @@ def check(root: Path = R) -> list[str]:
                 if shipped != expected: errors.append(f"plugin frontmatter must match {p.name}")
         except Exception as e: errors.append(f"{p.name}: {e}")
     try:
-        named = set(re.findall(r"`orchestration:(\w+)`", (root / "scripts/default-orchestration-rule.md").read_text(encoding="utf-8")))
+        rule = (root / RULE_DOC).read_text(encoding="utf-8")
+        named = set(re.findall(r"`orchestration:(\w+)`", rule))
         if named != AGENTS: errors.append(f"default-orchestration-rule.md must name exactly the roles {sorted(AGENTS)}, found {sorted(named)}")
+        if ROLE_LINE.findall(rule) != ROLE_LINE.findall((root / SKILL_DOC).read_text(encoding="utf-8")):
+            errors.append(f"the five role lines (- `orchestration:<role>`: ...) of {RULE_DOC} and {SKILL_DOC} must be identical and in the same order")
     except OSError as e: errors.append(f"rule: {e}")
     return errors + doc_errors(root, documented, shipped, turns)
+
+
+def changelog_errors(root: Path, version) -> list[str]:
+    """CHANGELOG.md must carry the plugin.json version as its first released section, below at most an Unreleased one."""
+    if not version: return ["plugin.json: missing version"]
+    want = f"## {version} — "
+    try: headings = [line for line in (root / "CHANGELOG.md").read_text(encoding="utf-8").splitlines() if line.startswith("## ")]
+    except Exception as e: return [f"changelog: {e}"]
+    above = headings[:next((i for i, h in enumerate(headings) if re.fullmatch(re.escape(want) + r"\d{4}-\d{2}-\d{2}", h)), len(headings))]
+    if above == headings: return [f"CHANGELOG.md: no heading `{want}<YYYY-MM-DD>` for the plugin.json version"]
+    if above not in ([], ["## Unreleased"]): return [f"CHANGELOG.md: only `## Unreleased` may precede `{want}<YYYY-MM-DD>`, found {above}"]
+    return []
 
 
 def table_rows(path: Path, first_cell: str, errors: list[str]) -> dict[str, list[str]]:

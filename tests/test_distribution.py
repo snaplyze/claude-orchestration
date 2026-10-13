@@ -14,6 +14,36 @@ class DistributionTests(unittest.TestCase):
         out=io.TextIOWrapper(io.BytesIO(),encoding="utf-8",newline="\n"); err=err or io.TextIOWrapper(io.BytesIO(),encoding="utf-8",newline="\n")  # newline: no os.linesep translation on Windows
         with mock.patch.object(sys,"argv",["install.py",*argv]), contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as cm: install.main()
         out.flush(); err.flush(); return cm.exception.code,out.buffer.getvalue().decode(),err.buffer.getvalue().decode(err.encoding)
+    def test_doctor_rejects_role_line_drift_and_changelog_without_the_release(self):
+        with tempfile.TemporaryDirectory() as td:
+            t=Path(td)
+            for d in ("plugin","profiles","docs",".claude-plugin"): shutil.copytree(ROOT/d,t/d)
+            (t/"scripts").mkdir(); shutil.copy(ROOT/"scripts/default-orchestration-rule.md",t/"scripts"); shutil.copy(ROOT/"CHANGELOG.md",t)
+            self.assertEqual(doctor.check(t),[])
+            skill=t/"plugin/skills/orchestrate/SKILL.md"; skill.write_text(skill.read_text(encoding="utf-8").replace("Run one per independent area","Run one per area"),encoding="utf-8")
+            errors=doctor.check(t); self.assertEqual(len(errors),1,errors); self.assertIn("default-orchestration-rule.md and plugin/skills/orchestrate/SKILL.md must be identical and in the same order",errors[0])
+            shutil.copy(ROOT/"plugin/skills/orchestrate/SKILL.md",skill); self.assertEqual(doctor.check(t),[])
+            m=t/"plugin/.claude-plugin/plugin.json"; version=json.loads(m.read_text(encoding="utf-8"))["version"]; m.write_text(m.read_text(encoding="utf-8").replace(f'"{version}"','"9.9.9"'),encoding="utf-8")
+            errors=doctor.check(t); self.assertEqual(len(errors),1,errors); self.assertIn("no heading `## 9.9.9 — <YYYY-MM-DD>`",errors[0])
+            m.write_text(m.read_text(encoding="utf-8").replace('"9.9.9"',f'"{version}"'),encoding="utf-8"); log=t/"CHANGELOG.md"
+            log.write_text(log.read_text(encoding="utf-8").replace(f"## {version} — ",f"## 9.9.9 — 2099-01-01\n\n- later\n\n## {version} — ",1),encoding="utf-8")
+            errors=doctor.check(t); self.assertEqual(len(errors),1,errors); self.assertIn(f"only `## Unreleased` may precede `## {version} — <YYYY-MM-DD>`",errors[0])
+            log.write_text(log.read_text(encoding="utf-8").replace("## Unreleased","## 9.9.9 — 2099-01-01"),encoding="utf-8"); self.assertTrue(any("only `## Unreleased`" in e for e in doctor.check(t)))
+            log.write_text(f"# Changelog\n\n## {version} — "+(ROOT/"CHANGELOG.md").read_text(encoding="utf-8").split(f"## {version} — ",1)[1],encoding="utf-8"); self.assertEqual(doctor.check(t),[])  # no Unreleased right after a release
+            log.unlink(); self.assertTrue(any(e.startswith("changelog: ") for e in doctor.check(t)))
+    def test_runtime_smoke_judges_skill_delegation(self):
+        call=lambda t,**i:{"hook_event_name":"PreToolUse","tool_name":"Agent","tool_input":{"subagent_type":t,**i}}
+        nested=dict(call("Explore"),agent_id="a")
+        for events,ok in (([call("orchestration:explorer")],True),([call("orchestration:explorer"),call("orchestration:reviewer"),nested],True),([],False),([nested],False),
+                          ([call("orchestration:explorer"),call("Explore")],False),([call(None)],False),([call("orchestration:explorer",model="sonnet")],False),([call("orchestration:explorer",effort="low")],False)):
+            with self.subTest(events=events): self.assertEqual(runtime_smoke.check_skill_delegation(events)["ok"],ok)
+        self.assertEqual(runtime_smoke.check_skill_delegation([call("orchestration:explorer")])["seen"],"explorer, no overrides")
+        self.assertEqual(runtime_smoke.check_skill_delegation([call("orchestration:worker",model="opus",effort="high")])["seen"],"worker (overrides effort,model)")
+        self.assertIn("orchestration:explorer",runtime_smoke.SKILL_TASK); self.assertTrue(runtime_smoke.SKILL_TASK.startswith("/orchestration:orchestrate "))
+        out=io.StringIO()
+        with mock.patch.object(runtime_smoke,"run_claude",return_value={"total_cost_usd":0.25}), mock.patch.object(sys,"argv",["smoke","--roles","","--skill"]), contextlib.redirect_stdout(out):
+            self.assertEqual(runtime_smoke.main(),1)  # a run that left no hook events fails both skill rows
+        self.assertIn("FAIL  orchestrate skill             expected opus/high",out.getvalue()); self.assertIn("FAIL  orchestrate skill delegation  expected roles only",out.getvalue()); self.assertIn("seen no Agent call",out.getvalue())
     def test_doctor_accepts_distribution(self):
         self.assertEqual(doctor.check(),[])
     def test_doctor_refuses_reserved_plugin_names(self):
