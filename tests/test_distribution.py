@@ -222,30 +222,34 @@ class DistributionTests(unittest.TestCase):
             with mock.patch.object(install.os,"replace",fail_into_plugin), self.assertRaises(OSError): install.install_user(mkt,"pro-balanced",cfg)
             self.assertFalse(mkt.exists()); self.assertEqual(sorted(p.name for p in cfg.iterdir()),["CLAUDE.md"]); self.assertEqual((cfg/"CLAUDE.md").read_bytes(),legacy)
     def test_register_and_status_through_the_claude_cli(self):
-        stub=("import json,os,sys\nfrom pathlib import Path\nf=Path(os.environ['STUB_STATE']);st=json.loads(f.read_text())\na=[x for x in sys.argv[1:] if x!='--json'];st['calls'].append(' '.join(a[1:3]) if a[1]=='marketplace' else a[1])\n"
-              "m,p=st['marketplaces'],st['plugins'];r={'outcome':'ok'}\nif a[1:3]==['marketplace','list']:r=[{'name':k,'path':v} for k,v in m.items()]\n"
-              "elif a[1:3]==['marketplace','add']:m[json.loads((Path(a[3])/'.claude-plugin/marketplace.json').read_text())['name']]=a[3]\n"
-              "elif a[1:3]==['marketplace','remove']:m.pop(a[3])\nelif a[1]=='list':r=[{'id':k,'scope':'user',**v} for k,v in p.items()]\n"
-              "elif a[1]=='install':p[a[2]]={'enabled':True,'readFromFolder':str(Path(m[a[2].split('@')[1]])/'plugin')}\nelif a[1]=='enable':p[a[2]]['enabled']=True\n"
-              "elif a[1]=='uninstall':p.pop(a[2])\nf.write_text(json.dumps(st));print(json.dumps(r))\n")
-        with tempfile.TemporaryDirectory() as td:
-            t=Path(td).resolve(); state=t/"state.json"; (t/"claude.py").write_text(stub); claude=[sys.executable,str(t/"claude.py")]; mkt=t/"mkt"; cfg=t/"cfg"
-            def reset(**plugins): state.write_text(json.dumps({"marketplaces":{},"plugins":plugins,"calls":[]}))
-            def calls(): return json.loads(state.read_text())["calls"]
-            with mock.patch.dict(os.environ,{"STUB_STATE":str(state)}):
-                reset(); install.install_user(mkt,"team-premium",cfg)
-                self.assertEqual([ok for ok,_ in install.status(claude,mkt,cfg)],[True,True,False])
-                install.register(claude,mkt); install.register(claude,mkt)
-                self.assertEqual([c for c in calls() if c not in ("marketplace list","list")],["marketplace add","install"])
-                checks=install.status(claude,mkt,cfg); self.assertTrue(all(ok for ok,_ in checks),checks); self.assertIn("profile team-premium",checks[1][1])
-                p=json.loads(state.read_text()); p["plugins"][install.PLUGIN_ID]["enabled"]=False; state.write_text(json.dumps(p)); install.register(claude,mkt); self.assertEqual(calls()[-3],"enable")
-                install.unregister(claude,mkt); p=json.loads(state.read_text()); self.assertEqual((p["marketplaces"],p["plugins"]),({},{}))
-                reset(**{"orchestration@snaplyze-orchestration":{"enabled":True}})
-                with self.assertRaisesRegex(ValueError,"also registers"): install.register(claude,mkt)
-                self.assertIn("conflict: orchestration@snaplyze-orchestration is also enabled",[line for _,line in install.status(claude,mkt,cfg)])
-                state.write_text(json.dumps({"marketplaces":{"orchestration-local":str(t/"elsewhere")},"plugins":{},"calls":[]}))
-                with self.assertRaisesRegex(ValueError,"already registered from"): install.register(claude,mkt)
-                self.assertEqual([c for c in calls() if c not in ("marketplace list","list")],[])
+        st={"marketplaces":{},"plugins":{},"calls":[]}
+        def fake_cli(cmd,**kw):  # the claude CLI's --json behavior for the commands the installer uses
+            a=cmd[1:-1]; m,p=st["marketplaces"],st["plugins"]; st["calls"].append(" ".join(a[1:3]) if a[1]=="marketplace" else a[1]); r={"outcome":"ok"}
+            if a[1:3]==["marketplace","list"]: r=[{"name":k,"path":v} for k,v in m.items()]
+            elif a[1:3]==["marketplace","add"]: m[json.loads((Path(a[3])/".claude-plugin/marketplace.json").read_text())["name"]]=a[3]
+            elif a[1:3]==["marketplace","remove"]: m.pop(a[3])
+            elif a[1]=="list": r=[{"id":k,"scope":"user",**v} for k,v in p.items()]
+            elif a[1]=="install": p[a[2]]={"enabled":True,"readFromFolder":str(Path(m[a[2].split("@")[1]])/"plugin")}
+            elif a[1]=="enable": p[a[2]]["enabled"]=True
+            elif a[1]=="uninstall": p.pop(a[2])
+            return subprocess.CompletedProcess(cmd,0,json.dumps(r,indent=2 if isinstance(r,list) else None)+"\n","")
+        with tempfile.TemporaryDirectory() as td, mock.patch.object(install.subprocess,"run",fake_cli):
+            t=Path(td).resolve(); claude=["claude"]; mkt=t/"mkt"; cfg=t/"cfg"
+            def reset(**plugins): st.update(marketplaces={},plugins=plugins,calls=[])
+            def changes(): return [c for c in st["calls"] if c not in ("marketplace list","list")]
+            install.install_user(mkt,"team-premium",cfg)
+            self.assertEqual([ok for ok,_ in install.status(claude,mkt,cfg)],[True,True,False])
+            install.register(claude,mkt); install.register(claude,mkt); self.assertEqual(changes(),["marketplace add","install"])
+            checks=install.status(claude,mkt,cfg); self.assertTrue(all(ok for ok,_ in checks),checks); self.assertIn("profile team-premium",checks[1][1])
+            st["plugins"][install.PLUGIN_ID]["enabled"]=False; install.register(claude,mkt); self.assertEqual(changes()[-1],"enable")
+            install.unregister(claude,mkt); self.assertEqual((st["marketplaces"],st["plugins"]),({},{}))
+            reset(**{"orchestration@snaplyze-orchestration":{"enabled":True}})
+            with self.assertRaisesRegex(ValueError,"also registers"): install.register(claude,mkt)
+            self.assertIn("conflict: orchestration@snaplyze-orchestration is also enabled",[line for _,line in install.status(claude,mkt,cfg)])
+            reset(); st["marketplaces"]["orchestration-local"]=str(t/"elsewhere")
+            with self.assertRaisesRegex(ValueError,"already registered from"): install.register(claude,mkt)
+            self.assertEqual(changes(),[])
+            with mock.patch.object(install.subprocess,"run",lambda cmd,**kw: subprocess.CompletedProcess(cmd,1,"","boom")), self.assertRaisesRegex(ValueError,"failed: boom"): install.register(claude,mkt)
             (cfg/"CLAUDE.md").write_bytes(install.LEGACY_BEGIN+b"\nx\n"+install.LEGACY_END+b"\n"); (cfg/"rules/claude-orchestration.md").write_bytes(install.RULE_HEADER+b"old\n")
             self.assertEqual([line.split(": ",1)[-1] for ok,line in install.status(None,mkt,cfg) if not ok],["outdated","still holds the pre-1.5 managed block (rerun with --default-rule)","registration not checked"])
     def test_symlinks_and_unknown_profile_names_rejected(self):
