@@ -283,7 +283,7 @@ def marker_of(settings: dict, path: Path) -> dict | None:
     marker = settings.get(MARKER)
     if marker is None:
         return None
-    if not (isinstance(marker, dict) and isinstance(marker.get("profile"), str) and isinstance(marker.get("managedKeys"), list)
+    if not (isinstance(marker, dict) and isinstance(marker.get("profile"), str) and marker["profile"] and isinstance(marker.get("managedKeys"), list)
             and all(isinstance(key, str) for key in marker["managedKeys"]) and all(isinstance(marker.get(key, {}), dict) for key in ("previous", "applied"))):
         raise ValueError(f"damaged {MARKER} marker in {path}; remove it by hand")
     return marker
@@ -342,6 +342,8 @@ def transaction(writes: dict[Path, bytes | None], dest: Path | None = None, file
     created here are removed again; each restore step runs on its own, and the original error propagates. After a
     successful run, work directories left beside dest by crashed runs are removed.
     """
+    if dest and not remove and files is None:
+        raise ValueError("transaction: an install needs the plugin files to stage")
     before = {path: path.read_bytes() if path.exists() else None for path in writes}
     created = missing_dirs([*(path.parent for path in writes), *([dest.parent] if dest else [])])
     work = stage = previous = None
@@ -449,7 +451,7 @@ def rule_writes(config_dir: Path, enable: bool) -> dict[Path, bytes | None]:
 
 def rules_dir(config_dir: Path | None) -> Path:
     """Where Claude Code reads user rules, resolved: every Markdown file there is loaded into every session."""
-    return (config_dir.expanduser() if config_dir else claude_config_dir()).resolve() / "rules"
+    return ((config_dir.expanduser() if config_dir else claude_config_dir()) / "rules").resolve()
 
 
 def vacant(root: Path) -> bool:
@@ -457,22 +459,31 @@ def vacant(root: Path) -> bool:
     return not root.exists() or (root.is_dir() and not any(p.name != LOCK_FILE for p in root.iterdir()))
 
 
-def marketplace_dir(root: Path, config_dir: Path | None = None) -> Path:
-    """Resolve the local marketplace directory: absent, empty, or one this installer built; never a link, never in rules/."""
+def refusal(root: Path, config_dir: Path | None = None) -> tuple[Path, str]:
+    """root expanded and resolved, and why this installer refuses it as a marketplace directory ("" when it does not):
+    a link at the root or its entries, the checkout, the rules directory, or foreign content."""
     root = root.expanduser()
     if is_link(root):
-        raise ValueError(f"refusing symlink as marketplace directory: {root}")
+        return root, f"refusing symlink as marketplace directory: {root}"
     root = root.resolve()
     if root == ROOT or ROOT in root.parents:
-        raise ValueError("marketplace directory must be outside the distribution checkout")
+        return root, "marketplace directory must be outside the distribution checkout"
     rules = rules_dir(config_dir)
     if root == rules or rules in root.parents:
-        raise ValueError(f"marketplace directory must not be inside {rules}, where Claude Code reads every Markdown file as a user rule")
+        return root, f"marketplace directory must not be inside {rules}, where Claude Code reads every Markdown file as a user rule"
     for path in (root / ".claude-plugin", root / ".claude-plugin/marketplace.json", root / "plugin"):
         if is_link(path):
-            raise ValueError(f"refusing symlink in marketplace directory: {path}")
+            return root, f"refusing symlink in marketplace directory: {path}"
     if not (vacant(root) or built_here(root)):
-        raise ValueError(f"{root} is neither empty nor an {LOCAL_MARKETPLACE} marketplace; pass another --marketplace-dir")
+        return root, f"{root} is neither empty nor an {LOCAL_MARKETPLACE} marketplace; pass another --marketplace-dir"
+    return root, ""
+
+
+def marketplace_dir(root: Path, config_dir: Path | None = None) -> Path:
+    """Resolve the local marketplace directory: absent, empty, or one this installer built; never a link, never in rules/."""
+    root, why = refusal(root, config_dir)
+    if why:
+        raise ValueError(why)
     return root
 
 
@@ -634,11 +645,7 @@ def status(claude: list[str] | None, root: Path, config_dir: Path) -> list[tuple
         current = data == RULE_HEADER + RULE_TEMPLATE.read_bytes()
         state = "current" if current else "absent" if data is None else "outdated" if data.startswith(RULE_HEADER) else "not written by this installer"
         checks = [(current, f"rule {rule}: {state}")]
-    root = root.expanduser()
-    linked = is_link(root)
-    root = root if linked else root.resolve()
-    rules = rules_dir(config_dir)
-    refused = "symlink (refused)" if linked else f"inside {rules} (refused)" if root == rules or rules in root.parents else "" if vacant(root) or built_here(root) else "not built by this installer (pass another --marketplace-dir)"
+    root, refused = refusal(root, config_dir)  # the same rule the installer applies, reported instead of raised
     local = not refused and built_here(root)
     if refused:
         checks.append((False, f"marketplace {root}: {refused}"))
@@ -666,6 +673,12 @@ def profile_arg(value: str) -> str:
     return value
 
 
+def dir_arg(value: str) -> Path:
+    if not value.strip():
+        raise argparse.ArgumentTypeError("empty directory")
+    return Path(value)
+
+
 def main() -> None:
     for stream in (sys.stdout, sys.stderr):
         stream.reconfigure(errors="backslashreplace")
@@ -674,7 +687,7 @@ def main() -> None:
     parser.add_argument("--profile", type=profile_arg)
     parser.add_argument("--uninstall", action="store_true")
     parser.add_argument("--user", action="store_true", help="build a local marketplace for a user-scope install instead of a project install")
-    parser.add_argument("--marketplace-dir", type=Path, help=f"local marketplace directory for --user and --status (default {DEFAULT_MARKETPLACE})")
+    parser.add_argument("--marketplace-dir", type=dir_arg, help=f"local marketplace directory for --user and --status (default {DEFAULT_MARKETPLACE})")
     parser.add_argument("--default-rule", action="store_true", help=f"install (with --uninstall: remove) the default-orchestration rule, rules/{RULE_FILE} in the Claude config directory; alone or with --user")
     parser.add_argument("--register", action="store_true", help="with --user: add the marketplace and install/enable the plugin at user scope through the claude CLI (with --uninstall: remove both)")
     parser.add_argument("--status", action="store_true", help="report whether orchestration is the default for this user: rule, marketplace build, registration, conflicts")

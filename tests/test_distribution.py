@@ -446,10 +446,11 @@ class DistributionTests(unittest.TestCase):
             t=Path(td).resolve(); install.install(t,"max-20x-thorough"); before=(t/".claude/settings.json").read_bytes(); install.install(t,"")
             self.assertEqual(((t/".claude/settings.json").read_bytes(),frontmatter(t/".claude/plugins/orchestration/skills/orchestrate/SKILL.md")["effort"]),(before,"xhigh"))
             code,out,err=self.cli(str(t),"--profile",""); self.assertEqual((code,out),(2,"")); self.assertIn("error: argument --profile: empty profile name",err); self.assertEqual((t/".claude/settings.json").read_bytes(),before)
+            s=self.settings(t); s["model"]="haiku"; (t/".claude/settings.json").write_text(json.dumps(s)); install.install(t,""); self.assertEqual(self.settings(t)["model"],"haiku")  # the refresh path: a changed key stays
     def test_damaged_marker_is_refused_in_one_line(self):
         with tempfile.TemporaryDirectory() as td:
             t=Path(td).resolve(); (t/".claude").mkdir(); s=t/".claude/settings.json"; M=install.MARKER
-            for marker in ({"profile":["x"],"managedKeys":[]},{"profile":"p","managedKeys":5},{"profile":"p","managedKeys":"model"},{"profile":"p","managedKeys":[1]},{"profile":"p","managedKeys":[],"previous":7},{"profile":"p","managedKeys":[],"applied":[]},"old",{"managedKeys":[]}):
+            for marker in ({"profile":["x"],"managedKeys":[]},{"profile":"p","managedKeys":5},{"profile":"p","managedKeys":"model"},{"profile":"p","managedKeys":[1]},{"profile":"p","managedKeys":[],"previous":7},{"profile":"p","managedKeys":[],"applied":[]},"old",{"managedKeys":[]},{"profile":"","managedKeys":[]}):
                 raw=json.dumps({"x":1,M:marker}).encode(); s.write_bytes(raw)
                 for argv in ((str(t),"--profile","pro-balanced"),(str(t),),(str(t),"--uninstall")):
                     with self.subTest(marker=marker,argv=argv):
@@ -507,23 +508,31 @@ class DistributionTests(unittest.TestCase):
                 self.assertEqual((code,out,err.startswith("error: marketplace directory must not be inside")),(1,"",True),err)
             self.assertFalse(cfg.exists())
             with env: install.install_user(t/"rules","pro-balanced",cfg)  # a sibling named rules is fine
+            ext=t/"ext"; ext.mkdir(); shutil.rmtree(cfg/"rules"); (cfg/"rules").symlink_to(ext,target_is_directory=True)  # a symlinked rules/ is followed: its target is the rules directory too
+            with env, self.assertRaisesRegex(ValueError,"must not be inside"): install.install_user(ext/"mkt","pro-balanced")
+            self.assertFalse((ext/"mkt").exists()); (cfg/"rules").unlink()
             with mock.patch.dict(os.environ,{"CLAUDE_CONFIG_DIR":str(t/"other")}): install.install_user(cfg/"rules/mkt","pro-balanced")  # built before the config directory moved here: status refuses, writes refuse
             with env: code,out,err=self.cli("--status","--marketplace-dir",str(cfg/"rules/mkt"),"--claude",str(t/"none"))
-            self.assertEqual((code,err),(1,"")); self.assertIn(f"TODO  marketplace {cfg/'rules/mkt'}: inside {cfg/'rules'} (refused)",out)
+            self.assertEqual((code,err),(1,"")); self.assertIn(f"TODO  marketplace {cfg/'rules/mkt'}: marketplace directory must not be inside {cfg/'rules'}",out)
     def test_status_lists_plugins_only_and_reports_a_foreign_directory(self):
         with tempfile.TemporaryDirectory() as td:
             t=Path(td).resolve(); cfg=t/"cfg"; mkt=t/"mkt"; calls=[]; stub=lambda claude,*a: calls.append(" ".join(a)) or []
             install.install_user(mkt,"pro-balanced",cfg)
             with mock.patch.object(install,"claude_json",stub): checks=install.status(["claude"],mkt,cfg)
             self.assertEqual((calls,[ok for ok,_ in checks]),(["list"],[True,True,False])); self.assertIn("profile max-5x-balanced or pro-balanced, matches this checkout",checks[1][1])  # one topology, both names
+            manifest=mkt/"plugin/.claude-plugin/plugin.json"; manifest.write_bytes(manifest.read_bytes()+b"\n")  # the same frontmatter, one other byte: file by file, not pair by pair
+            with mock.patch.object(install,"claude_json",stub): self.assertEqual(install.status(["claude"],mkt,cfg)[1],(False,f"marketplace {mkt}: profile max-5x-balanced or pro-balanced, differs from this checkout (rerun --user)"))
+            manifest.write_bytes(manifest.read_bytes()[:-1])
             self.assertEqual(install.build("pro-balanced"),install.tree(mkt/"plugin")); self.assertEqual(set(install.build(None)),set(install.tree(ROOT/"plugin"))); self.assertNotEqual(install.build("team-premium"),install.build("pro-balanced"))
             foreign=t/"foreign"; foreign.mkdir(); (foreign/"notes.txt").write_text("x"); link=t/"link"
             with mock.patch.dict(os.environ,{"CLAUDE_CONFIG_DIR":str(cfg)}), mock.patch.object(install,"claude_json",stub): code,out,err=self.cli("--status","--marketplace-dir",str(foreign),"--claude",sys.executable)
-            self.assertEqual((code,err),(1,"")); self.assertIn(f"TODO  marketplace {foreign}: not built by this installer (pass another --marketplace-dir)",out); self.assertEqual([p.name for p in foreign.iterdir()],["notes.txt"])
+            self.assertEqual((code,err),(1,"")); self.assertIn(f"TODO  marketplace {foreign}: {foreign} is neither empty nor an orchestration-local marketplace",out); self.assertEqual([p.name for p in foreign.iterdir()],["notes.txt"])
             try: link.symlink_to(mkt,target_is_directory=True)
             except OSError: self.skipTest("symlink unavailable")
             with mock.patch.dict(os.environ,{"CLAUDE_CONFIG_DIR":str(cfg)}), mock.patch.object(install,"claude_json",stub): code,out,err=self.cli("--status","--marketplace-dir",str(link),"--claude",sys.executable)
-            self.assertEqual((code,err),(1,"")); self.assertIn(f"TODO  marketplace {link}: symlink (refused)",out)
+            self.assertEqual((code,err),(1,"")); self.assertIn(f"TODO  marketplace {link}: refusing symlink as marketplace directory: {link}",out)
+            shutil.rmtree(mkt/"plugin"); (mkt/"plugin").symlink_to(t/"foreign",target_is_directory=True)  # status mirrors every installer refusal, entries too
+            with mock.patch.object(install,"claude_json",stub): self.assertEqual(install.status(["claude"],mkt,cfg)[1],(False,f"marketplace {mkt}: refusing symlink in marketplace directory: {mkt/'plugin'}"))
     def test_failed_registration_keeps_the_build_and_says_so(self):
         with tempfile.TemporaryDirectory() as td:
             t=Path(td).resolve(); mkt=t/"mkt"; cfg=t/"cfg"
