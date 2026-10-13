@@ -8,18 +8,19 @@ python scripts/doctor.py
 sh -n setup.sh
 ```
 
-`scripts/doctor.py` is the single static validator: plugin namespace, the root `marketplace.json` (one `orchestration` entry from `./plugin`), the exact five-agent set, supported model/effort pairs in the plugin and in all eight profiles, plugin frontmatter equal to `pro-balanced` (the marketplace topology), the default rule naming exactly the five roles, and the topology tables in the docs (no wrong, duplicate, or stale rows). The tests run it once, check that it rejects a broken copy, and verify installer behavior: per-profile materialization, round trip of prior settings through install, profile switch, and uninstall, a managed key changed by the user surviving uninstall, reinstall without `--profile`, byte-identical settings on a no-marker uninstall, rollback after an early (invalid profile) and a late (plugin swap) failure in both modes, user-mode ownership of the marketplace directory and the rule file, migration of the pre-1.5 `CLAUDE.md` block, `--register`/`--status` against a stub `claude`, and rejection of symlinks, junctions (Windows CI), and unknown profile names. Each installer guard was removed once to confirm a test fails without it.
+`scripts/doctor.py` is the single static validator: plugin namespace, the root `marketplace.json` (one `orchestration` entry from `./plugin`), the exact five-agent set, supported model/effort pairs in the plugin and in all eight profiles, plugin frontmatter equal to `pro-balanced` (the marketplace topology), the default rule naming exactly the five roles and its five role lines repeated byte-for-byte, in order, in the skill, a `CHANGELOG.md` heading `## <version> — <date>` for the `plugin.json` version with nothing but `Unreleased` above it, and the topology tables in the docs (no wrong, duplicate, or stale rows). The tests run it once, check that it rejects a broken copy, and verify installer behavior: per-profile materialization, round trip of prior settings through install, profile switch, and uninstall, a managed key changed by the user surviving uninstall, reinstall without `--profile`, byte-identical settings on a no-marker uninstall, rollback after an early (invalid profile) and a late (plugin swap) failure in both modes, user-mode ownership of the marketplace directory and the rule file, migration of the pre-1.5 `CLAUDE.md` block, `--register`/`--status` against a stub `claude`, and rejection of symlinks, junctions (Windows CI), and unknown profile names. Each installer guard was removed once to confirm a test fails without it.
 
 ## GitHub Actions
 
 CI uses only standard GitHub-hosted runners. It runs the same unittest and doctor commands on `ubuntu-latest`, `macos-latest`,
-and `windows-latest`, with Python 3.12 and 3.13, plus Python 3.11 on Ubuntu.
+and `windows-latest`, with Python 3.12 and 3.13, plus Python 3.11 and 3.14 on Ubuntu.
 The Windows/3.13 job also installs and uninstalls through `setup.ps1` (project,
 user, and rule-only modes), and a separate Ubuntu job checks `setup.sh` syntax
 and runs the same smoke test. A `plugin` job installs the pinned Claude Code
 and runs `claude plugin validate --strict` on `./plugin`, the root marketplace,
 and a generated user marketplace; the validator needs no login, so that job
-has no secret. Python is provided by SHA-pinned `actions/setup-python`.
+has no secret. Python is provided by SHA-pinned `actions/setup-python`; each
+action pin carries its version as a comment, which Dependabot keeps current.
 
 Triggers are pushes to `main`, pull requests, and manual dispatch. PR branch
 pushes do not also create a separate push run. A new push to a PR cancels the
@@ -55,7 +56,11 @@ installed profile is checked against its own values. Modes:
 
 - default: dispatch each `orchestration:*` role by name with a one-word task;
 - `--skill`: start on another model (`haiku` by default) and invoke
-  `/orchestration:orchestrate`, so a working model/effort override is visible;
+  `/orchestration:orchestrate` with a task that delegates to
+  `orchestration:explorer`, so a working model/effort override is visible; the
+  `orchestrate skill delegation` row passes when the session made at least one
+  Agent call, every call named an `orchestration:` role, and none passed
+  `model` or `effort`;
 - `--tool-surface`: ask explorer and researcher (no write tools) and reviewer
   (Bash, no-write by instruction) to create a file; pass only if no write tool
   ran and no file appeared. The same probe against `worker` fails, which shows
@@ -102,7 +107,9 @@ still printed.
 `.github/workflows/runtime-smoke.yml` runs the headless modes on GitHub-hosted
 Ubuntu with Claude Code pinned to 2.1.296: on manual dispatch and on
 same-repository PRs that touch `plugin/`, `profiles/`, the installer, the rule,
-or the smoke script. Besides the bundled plugin and an installed
+or the smoke script. A new push to a PR cancels its superseded run; every
+manual dispatch has a group of its own, so two dispatches on `main` never cancel
+each other. Besides the bundled plugin and an installed
 `max-20x-thorough` project profile, it builds a user install under a temporary
 `CLAUDE_CONFIG_DIR` (`--user --default-rule --register`), checks `--status`, and
 runs the `lookup` rule case against it, which proves the rule loads from
