@@ -16,7 +16,7 @@ The marketplace plugin ships the balanced topology listed in [architecture](arch
 
 ## Profiles
 
-Local installer profiles materialize both the root settings and each skill/subagent frontmatter:
+Local installer profiles materialize each skill/subagent frontmatter and, in a project install, the Orchestrator pair as the root `model`/`effortLevel` settings (`profiles/README.md` lists which names are aliases of one topology):
 
 | Profile | Orchestrator | Explorer | Researcher | Worker | Tester | Reviewer |
 |---|---|---|---|---|---|---|

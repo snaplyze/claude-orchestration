@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Installer: frontmatter keys are read only at column 0 (an indented continuation line or a Unicode line separator inside a value can no longer inject a key), and a patched file keeps every line ending it had; `doctor.py` rejects control and line-separator characters in shipped frontmatter values.
+- Profiles: the `settings` key is gone from the schema; the root `model`/`effortLevel` come from the profile's `skill` pair (the written `settings.json` is unchanged); `profiles/README.md` names which profiles share a topology.
 - Installer: `--uninstall` is transactional (settings first, the plugin parked beside its place until the write is through, restored on failure) and removes an empty `settings.json`, empty `plugins/` and `.claude` directories and stray `.orchestration-*` work directories; a lock file `.orchestration.lock` in the directory being changed makes a second concurrent run refuse with one line; a rerun without `--profile` keeps a managed key you changed by hand (an explicit `--profile` applies the profile).
 - Removed: the migration of the pre-1.5 `claude-orchestration:managed` block in the user `CLAUDE.md` (written only by installers 1.4.0–1.4.1 between 2026-10-09 and 2026-10-13); if you installed one of those, delete the block by hand.
 - `runtime_smoke.py`: a transcript still being written (partial UTF-8 tail), a hook event or transcript record of an unexpected shape, or non-ASCII text on a narrow console no longer loses a paid run's results; the hook script and Claude Code's output are decoded as UTF-8 regardless of the Windows code page.

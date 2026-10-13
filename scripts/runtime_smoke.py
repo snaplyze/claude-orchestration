@@ -7,7 +7,7 @@ session transcripts record the model of every assistant message. Each run makes 
 from __future__ import annotations
 import argparse, json, os, shlex, shutil, subprocess, sys, tempfile, time
 from pathlib import Path
-from install import PLUGIN, frontmatter
+from install import PLUGIN, RULE_FILE, RULE_TEMPLATE, claude_config_dir, frontmatter
 
 ROLES = ("explorer", "researcher", "worker", "tester", "reviewer")
 TASK = "Reply with the single word OK. Do not use any tools."
@@ -17,8 +17,6 @@ NO_WRITE_BY_INSTRUCTION = ("reviewer",)  # keeps Bash; its no-write rule is beha
 WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit", "Bash", "PowerShell"}
 HOOK = "import sys\nwith open(sys.argv[1], 'a', encoding='utf-8') as f:\n    f.write(sys.stdin.buffer.read().decode('utf-8').strip() + '\\n')\n"  # bytes: the console code page must not decode Claude Code's UTF-8
 HOOK_EVENTS = ("PreToolUse", "SubagentStop", "Stop", "InstructionsLoaded")
-RULE = Path(__file__).resolve().parent / "default-orchestration-rule.md"
-RULE_FILE = "claude-orchestration.md"  # name of the installed rule file, also used for the bundled copy
 # --default-rule: an unfamiliar codebase where each subsystem's value is reached through a five-module call chain,
 # next to retired legacy modules holding a decoy value. (subsystem, entry function, constant, value, decoy)
 FLOWS = (("orders", "create_order", "TABLE", '"orders_v2"', '"orders_v1"'),
@@ -148,7 +146,7 @@ def forget_sessions(events: list[dict]) -> int:
     Only `<projects>/<project>/<session>.jsonl`, its `<session>/` directory, and the project folder once it holds
     nothing but empty directories are removed.
     """
-    projects = (Path(os.environ.get("CLAUDE_CONFIG_DIR") or "~/.claude").expanduser() / "projects").resolve()
+    projects = (claude_config_dir() / "projects").resolve()
     removed = 0
     for path in {Path(e["transcript_path"]).resolve() for e in events if isinstance(e.get("transcript_path"), str) and "agent_id" not in e}:
         if path.suffix != ".jsonl" or path.parent.parent != projects:
@@ -426,12 +424,12 @@ def main() -> int:
             results.append(check_agent_session(load_events(work / "hooks.jsonl"), frontmatter(plugin_dir / "agents" / f"{role}.md"), role))
 
         def default_rule(name: str, task: str, project_rules: str | None, expect: frozenset | None):
-            cfg = Path(os.environ.get("CLAUDE_CONFIG_DIR") or "~/.claude").expanduser()
+            cfg = claude_config_dir()
             extra, settings, env, source = (), None, None, None
             if not args.use_installed:  # bundled rule through --add-dir; the user's own instructions are left out
                 rules = Path(td) / "user-rules" / ".claude/rules"
                 rules.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(RULE, rules / RULE_FILE)
+                shutil.copyfile(RULE_TEMPLATE, rules / RULE_FILE)
                 source = rules
                 extra, env = ("--add-dir", str(rules.parents[1])), {"CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD": "1"}
                 settings = {"claudeMdExcludes": sorted({pattern for d in (cfg, cfg.resolve()) for pattern in (str(d / "CLAUDE.md"), str(d / "rules") + "/**")})}

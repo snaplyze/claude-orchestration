@@ -21,6 +21,12 @@ LOCK_FILE = ".orchestration.lock"  # held by locked() in the directory a run mod
 JUNCTION = 0xA0000003  # IO_REPARSE_TAG_MOUNT_POINT
 swap = os.replace  # directory swaps in transaction(); a module attribute so tests can inject failures without patching os
 run_cli = subprocess.run  # the claude CLI call in claude_json(); same reason
+KEY = re.compile(r"([A-Za-z0-9_-]+):")  # a frontmatter key starts at column 0; an indented line continues the value above
+
+
+def claude_config_dir() -> Path:
+    """Claude Code's user configuration directory: CLAUDE_CONFIG_DIR, or ~/.claude."""
+    return Path(os.environ.get("CLAUDE_CONFIG_DIR") or "~/.claude").expanduser()
 
 
 def load_json(path: Path) -> dict:
@@ -147,19 +153,39 @@ def profile_data(name: str) -> dict:
     if name not in {p.stem for p in PROFILES.glob("*.json")}:
         raise ValueError(f"unknown profile: {name}; pass --profile with a name from {PROFILES}")
     data = load_json(PROFILES / f"{name}.json")
-    if not all(k in data for k in ("settings", "skill", "agents")):
+    if not all(k in data for k in ("skill", "agents")):
         raise ValueError(f"invalid profile schema: {name}")
     return data
 
 
-def split_frontmatter(text: str, path: Path) -> tuple[list[str], str]:
-    """Return the YAML frontmatter lines and the body after the closing `---` line."""
-    lines = text.splitlines(keepends=True)
-    if lines and lines[0].strip() == "---":
+def root_fragment(profile: dict) -> dict:
+    """The settings.json keys a project install manages: the orchestrator's pair from the profile's skill."""
+    return {"model": profile["skill"]["model"], "effortLevel": profile["skill"]["effort"]}
+
+
+def split_frontmatter(text: str, path: Path) -> tuple[list[str], str, tuple[str, str]]:
+    """Return the YAML frontmatter lines (each keeping its own `\r`, if any), the body after the closing `---` line, and
+    the two delimiter lines verbatim, so a patched file keeps every line ending it had.
+
+    Lines end at `\n` only: splitlines() would also break at U+2028/U+2029, NEL, VT and FF, which YAML keeps in a value.
+    """
+    lines = text.split("\n")
+    if lines and lines[0].rstrip("\r").strip(" \t") == "---":
         for i, line in enumerate(lines[1:], 1):
-            if line.strip() == "---":
-                return [line.rstrip("\r\n") for line in lines[1:i]], "".join(lines[i + 1:])
+            if line.rstrip("\r").strip(" \t") == "---":
+                return lines[1:i], "\n".join(lines[i + 1:]), (lines[0], line)
     raise ValueError(f"missing YAML frontmatter: {path}")
+
+
+def read_frontmatter(path: Path) -> tuple[list[str], str, tuple[str, str]]:
+    with path.open(encoding="utf-8", newline="") as fh:  # no newline translation: the style is detected and kept
+        return split_frontmatter(fh.read(), path)
+
+
+def key_of(line: str) -> str | None:
+    """The key a frontmatter line declares, or None for a continuation line or anything else."""
+    match = KEY.match(line)
+    return match[1] if match else None
 
 
 def unquote(value: str) -> str:
@@ -168,22 +194,24 @@ def unquote(value: str) -> str:
 
 
 def frontmatter(path: Path) -> dict[str, str]:
-    lines, _ = split_frontmatter(path.read_text(encoding="utf-8"), path)
-    return {k.strip(): unquote(v) for k, v in (line.split(":", 1) for line in lines if ":" in line)}
+    lines = read_frontmatter(path)[0]
+    return {key_of(line): unquote(line.split(":", 1)[1]) for line in lines if key_of(line)}
 
 
 def patch_frontmatter(path: Path, values: dict[str, str]) -> None:
-    lines, body = split_frontmatter(path.read_text(encoding="utf-8"), path)
-    output, seen = [], set()
+    """Set the given keys in the frontmatter, touching no other line and keeping each line's own ending."""
+    lines, body, (opening, closing) = read_frontmatter(path)
+    output, seen, ending = [], set(), "\r" if closing.endswith("\r") else ""
     for line in lines:
-        key = line.split(":", 1)[0].strip() if ":" in line else ""
+        key = key_of(line)
         if key in values:
-            output.append(f"{key}: {values[key]}")
+            output.append(f"{key}: {values[key]}" + ("\r" if line.endswith("\r") else ""))
             seen.add(key)
         else:
             output.append(line)
-    output += [f"{key}: {value}" for key, value in values.items() if key not in seen]
-    path.write_text("---\n" + "\n".join(output) + "\n---\n" + body, encoding="utf-8")
+    output += [f"{key}: {value}{ending}" for key, value in values.items() if key not in seen]
+    with path.open("w", encoding="utf-8", newline="") as fh:
+        fh.write("\n".join([opening, *output, closing]) + "\n" + body)
 
 
 def materialize_profile(stage: Path, profile: dict) -> None:
@@ -214,7 +242,7 @@ def release_settings(settings: dict) -> bool:
 def apply_settings(settings: dict, name: str, profile: dict, keep_changes: bool = False) -> None:
     """Merge the profile's settings and record the marker. With keep_changes (a rerun that takes the profile from the
     marker), a managed key the user changed since the last install keeps the user's value and its recorded `previous`."""
-    fragment, marker = profile["settings"], settings.get(MARKER)
+    fragment, marker = root_fragment(profile), settings.get(MARKER)
     applied = marker.get("applied") if keep_changes and isinstance(marker, dict) else None
     changed = [key for key in fragment if key in applied and settings.get(key) != applied[key]] if isinstance(applied, dict) else []
     user = {key: settings[key] for key in changed if key in settings}
@@ -536,13 +564,13 @@ def main() -> None:
 
 
 def run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
-    config_dir = Path(os.environ.get("CLAUDE_CONFIG_DIR") or "~/.claude").expanduser()
+    cfg = claude_config_dir()
     found = shutil.which(args.claude)  # the full path, so a Windows npm shim (claude.cmd) runs too
     claude = [found or args.claude]
     if args.status:
         if args.target or args.profile or args.uninstall or args.register:
             parser.error("--status runs alone")
-        checks = status(claude if found else None, marketplace_dir(args.marketplace_dir), config_dir)
+        checks = status(claude if found else None, marketplace_dir(args.marketplace_dir), cfg)
         print("\n".join(("OK    " if ok else "TODO  ") + line for ok, line in checks))
         return 0 if all(ok for ok, _ in checks) else 1
     if args.register and not args.user:
@@ -550,13 +578,13 @@ def run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     if args.user:
         if args.target:
             parser.error("--user takes no target directory")
-        rule_dir = config_dir if args.default_rule else None
+        rule_dir = cfg if args.default_rule else None
         if args.uninstall:
             root = marketplace_dir(args.marketplace_dir)
             if args.register:
                 unregister(claude, root)
             left = uninstall_user(root, rule_dir)
-            print("Removed the local marketplace build" + (f" and {rule_path(config_dir)}" if rule_dir else "") + (f"; unregistered {PLUGIN_ID}" if args.register else ""))
+            print("Removed the local marketplace build" + (f" and {rule_path(cfg)}" if rule_dir else "") + (f"; unregistered {PLUGIN_ID}" if args.register else ""))
             if left:
                 print(f"Kept {root}: it also holds {', '.join(p.name for p in left)}")
             if not args.register:
@@ -565,7 +593,7 @@ def run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         if not args.profile:
             parser.error("--user needs --profile")
         dest = install_user(args.marketplace_dir, args.profile, rule_dir)
-        print(f"Built local marketplace {LOCAL_MARKETPLACE} with plugin at {dest}" + (f"; default rule in {rule_path(config_dir)}" if rule_dir else ""))
+        print(f"Built local marketplace {LOCAL_MARKETPLACE} with plugin at {dest}" + (f"; default rule in {rule_path(cfg)}" if rule_dir else ""))
         if args.register:
             register(claude, dest.parent)
             print(f"Registered {PLUGIN_ID} at user scope; it loads in place, so restart Claude Code sessions to pick it up.")
@@ -576,8 +604,8 @@ def run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     if args.target is None:
         if not args.default_rule:
             parser.error("a project install needs a target directory (or use --user, --default-rule, or --status)")
-        set_rule(config_dir, not args.uninstall)
-        print(("Removed " if args.uninstall else "Installed ") + str(rule_path(config_dir)))
+        set_rule(cfg, not args.uninstall)
+        print(("Removed " if args.uninstall else "Installed ") + str(rule_path(cfg)))
         return 0
     if args.default_rule:
         parser.error("--default-rule is a user-level option: run it alone or with --user")

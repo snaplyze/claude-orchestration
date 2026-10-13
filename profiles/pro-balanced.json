@@ -1,8 +1,4 @@
 {
-  "settings": {
-    "model": "opus",
-    "effortLevel": "high"
-  },
   "skill": {
     "model": "opus",
     "effort": "high"

@@ -16,6 +16,7 @@ MARKETPLACE_PROFILE = "pro-balanced"
 ROLE_ORDER = ("explorer", "researcher", "worker", "tester", "reviewer")
 RULE_DOC, SKILL_DOC = "scripts/default-orchestration-rule.md", "plugin/skills/orchestrate/SKILL.md"
 ROLE_LINE = re.compile(r"^- `orchestration:(?:explorer|researcher|worker|tester|reviewer)`: .*$", re.M)  # the rule's trigger lines
+UNSAFE = re.compile("[\x00-\x08\x0b-\x1f\x85\u2028\u2029]")  # C0 controls except tab and LF, NEL, and the Unicode line/paragraph separators
 
 
 def reserved_name(name: str) -> bool:
@@ -56,6 +57,7 @@ def check(root: Path = R) -> list[str]:
         try: d = frontmatter(path)
         except Exception as e: errors.append(f"{path.name}: {e}"); continue
         errors += pair_errors(path.name, d.get("model"), d.get("effort"), ROOT_MODELS if key == "skill" else MODELS)
+        errors += [f"{path.name}: control or separator character in {k}" for k, v in d.items() if UNSAFE.search(v)]
         shipped[key] = [d.get("model"), d.get("effort")]
         turns[key] = d.get("maxTurns", "session-owned")
 
@@ -64,9 +66,8 @@ def check(root: Path = R) -> list[str]:
     for p in profiles:
         try:
             d = json.loads(p.read_text(encoding="utf-8"))
-            if set(d) != {"settings", "skill", "agents"}: errors.append(f"{p.name}: invalid schema"); continue
+            if set(d) != {"skill", "agents"}: errors.append(f"{p.name}: invalid schema"); continue
             if set(d["agents"]) != AGENTS: errors.append(f"{p.name}: incomplete agents")
-            errors += pair_errors(f"{p.name} settings", d["settings"].get("model"), d["settings"].get("effortLevel"), ROOT_MODELS)
             errors += pair_errors(f"{p.name} skill", d["skill"].get("model"), d["skill"].get("effort"), ROOT_MODELS)
             for agent, pair in d["agents"].items():
                 if not isinstance(pair, list) or len(pair) != 2: errors.append(f"{p.name} {agent}: expected [model, effort]"); continue

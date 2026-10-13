@@ -61,7 +61,9 @@ class DistributionTests(unittest.TestCase):
             j=t/"plugin/.claude-plugin/plugin.json"; j.write_text(json.dumps({**json.loads(j.read_text()),"name":"claude-x"}))
             (t/"profiles/api-quality.json").unlink(); install.patch_frontmatter(t/"plugin/skills/orchestrate/SKILL.md",{"model":"haiku"})
             (t/"plugin/agents/extra.md").write_text("---\nname: extra\nmodel: haiku\neffort: low\n---\n")
-            p=t/"profiles/team-standard.json"; d=json.loads(p.read_text()); del d["agents"]["researcher"]; d["settings"]["model"]="haiku"; p.write_text(json.dumps(d))
+            p=t/"profiles/team-standard.json"; d=json.loads(p.read_text()); del d["agents"]["researcher"]; d["skill"]["model"]="haiku"; p.write_text(json.dumps(d))
+            p=t/"profiles/max-5x-balanced.json"; d=json.loads(p.read_text()); p.write_text(json.dumps({**d,"settings":{"model":"opus","effortLevel":"high"}}))  # the pre-1.6 key
+            install.patch_frontmatter(t/"plugin/agents/researcher.md",{"description":"a\u2028model: evil"})
             errors=doctor.check(t)
             self.assertTrue(any("pro-economy.json tester" in e for e in errors),errors)
             self.assertTrue(any("must match pro-balanced.json" in e for e in errors),errors)
@@ -69,8 +71,10 @@ class DistributionTests(unittest.TestCase):
             self.assertTrue(any("docs/architecture.md: row worker" in e for e in errors),errors)
             self.assertTrue(any("must name exactly the roles" in e and "'qa'" in e for e in errors),errors)
             for message in ("marketplace.json must list only orchestration from ./plugin","duplicate row pro-economy","row pro-legacy has no profile","plugin name 'claude-x' is reserved","expected 8 profiles, found 7",
-                            "SKILL.md: unsupported model 'haiku'","plugin agents must be exactly","team-standard.json: incomplete agents","team-standard.json settings: unsupported model 'haiku'"):
+                            "SKILL.md: unsupported model 'haiku'","plugin agents must be exactly","team-standard.json: incomplete agents","team-standard.json skill: unsupported model 'haiku'",
+                            "max-5x-balanced.json: invalid schema","researcher.md: control or separator character in description"):
                 self.assertTrue(any(message in e for e in errors),(message,errors))
+            self.assertFalse(any("researcher.md: unsupported model" in e for e in errors),errors)  # the separator stays inside the description value
     def test_runtime_smoke_judges_hook_and_transcript_evidence(self):
         with tempfile.TemporaryDirectory() as td:
             t=Path(td); plugin=t/"plugin"; (plugin/"skills/orchestrate").mkdir(parents=True); (plugin/"agents").mkdir()
@@ -176,7 +180,8 @@ class DistributionTests(unittest.TestCase):
                 sf=frontmatter(root/"skills/orchestrate/SKILL.md"); self.assertEqual((sf["model"],sf["effort"]),(declared["skill"]["model"],declared["skill"]["effort"]))
                 for agent,(model,effort) in declared["agents"].items():
                     af=frontmatter(root/"agents"/f"{agent}.md"); self.assertEqual((af["model"],af["effort"]),(model,effort))
-                self.assertEqual({k:self.settings(t)[k] for k in declared["settings"]},declared["settings"])
+                fragment={"model":declared["skill"]["model"],"effortLevel":declared["skill"]["effort"]}  # the root settings derive from the skill pair; the bytes are the pre-A-32 reference
+                self.assertEqual((t/".claude/settings.json").read_bytes(),(json.dumps({**fragment,install.MARKER:{"profile":name,"managedKeys":["effortLevel","model"],"previous":{},"applied":fragment}},indent=2)+"\n").encode())
                 self.assertEqual([p.name for p in (t/".claude/plugins").iterdir()],["orchestration"])
     def test_release_settings_restores_values_the_user_left_alone(self):
         M=install.MARKER; marker=lambda **kw:{"profile":"p","managedKeys":["model","effortLevel"],**kw}; full=marker(previous={"model":"sonnet"},applied={"model":"opus","effortLevel":"high"})
@@ -203,6 +208,17 @@ class DistributionTests(unittest.TestCase):
             f=Path(td)/"a.md"; f.write_text('---\nname: a\ndescription: x --- y\nmodel: "opus"\neffort: \'high\'\n---\nbody --- text\n')
             self.assertEqual({k:frontmatter(f)[k] for k in ("description","model","effort")},{"description":"x --- y","model":"opus","effort":"high"})
             install.patch_frontmatter(f,{"model":"sonnet","effort":"low"}); self.assertEqual(f.read_text(),"---\nname: a\ndescription: x --- y\nmodel: sonnet\neffort: low\n---\nbody --- text\n")
+    def test_frontmatter_keeps_separators_continuation_lines_and_the_newline_style(self):
+        lines=["---","name: a","description: a\u2028model: evil","note: >","  model: x","model: opus","effort: high","---","body","  model: x",""]  # U+2028 and an indented continuation line
+        for nl in ("\n","\r\n"):
+            with self.subTest(newline=nl), tempfile.TemporaryDirectory() as td:
+                f=Path(td)/"a.md"; text=nl.join(lines); f.write_bytes(text.encode()); d=frontmatter(f)
+                self.assertEqual((sorted(d),d["description"],d["model"],d["note"]),(["description","effort","model","name","note"],"a\u2028model: evil","opus",">"))
+                install.patch_frontmatter(f,{"model":"sonnet","effort":"low"}); got=f.read_bytes().decode()
+                self.assertEqual(got,text.replace("model: opus","model: sonnet").replace("effort: high","effort: low")); self.assertEqual(got.count("model: sonnet"),1)
+        with tempfile.TemporaryDirectory() as td:  # mixed endings: every line keeps its own; an appended key takes the closing line's
+            f=Path(td)/"m.md"; text="---\nname: a\r\nmodel: opus\n---\r\nbody\r\n"; f.write_bytes(text.encode()); install.patch_frontmatter(f,{"model":"sonnet","effort":"low"})
+            self.assertEqual(f.read_bytes().decode(),"---\nname: a\r\nmodel: sonnet\neffort: low\r\n---\r\nbody\r\n")
     def test_reinstall_without_profile_keeps_installed_profile(self):
         with tempfile.TemporaryDirectory() as td:
             t=Path(td); install.install(t,"max-20x-thorough"); before=(t/".claude/settings.json").read_bytes()
@@ -254,7 +270,7 @@ class DistributionTests(unittest.TestCase):
             self.assertEqual((code,out,err.splitlines()[1:]),(1,"",[])); self.assertTrue(err.startswith("error: unknown profile: \\u0451"),err); self.assertEqual(list(t.iterdir()),[])
             self.assertEqual(self.cli(str(t),"--user")[0],2); self.assertEqual(self.cli("--status","--profile","x")[0],2)
             cfg=t/"cfg"; install.set_rule(cfg,True); stub=lambda claude,*a: [] if a[0]=="marketplace" else [{"id":"orchestration@other","enabled":True}]
-            with mock.patch.dict(os.environ,{"CLAUDE_CONFIG_DIR":str(cfg)}), mock.patch.object(install,"claude_json",stub): code,out,err=self.cli("--status","--marketplace-dir",str(t/"mkt"),"--claude",sys.executable)
+            with mock.patch.dict(os.environ,{"CLAUDE_CONFIG_DIR":str(cfg)}), mock.patch.object(install,"claude_json",stub): code,out,err=self.cli("--status","--marketplace-dir",str(t/"mkt"),"--claude",sys.executable); self.assertEqual(install.claude_config_dir(),cfg)
             self.assertEqual((code,err,[line[:6] for line in out.splitlines()]),(0,"",["OK    "]*2),out); self.assertIn("plugin orchestration@other: enabled",out)
             self.assertEqual(self.cli(str(t),"--uninstall"),(0,"Uninstalled orchestration plugin\n","")); self.assertEqual([p.name for p in t.iterdir()],["cfg"])
             r=subprocess.run([sys.executable,str(ROOT/"scripts/install.py"),str(t),"--profile","pro-balanced"],capture_output=True,text=True)  # the one end-to-end run of the real entry point
