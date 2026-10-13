@@ -14,7 +14,7 @@ TASK = "Reply with the single word OK. Do not use any tools."
 READ_ONLY = ("explorer", "researcher")  # no write tools in frontmatter
 NO_WRITE_BY_INSTRUCTION = ("reviewer",)  # keeps Bash; its no-write rule is behavioral
 WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit", "Bash", "PowerShell"}
-HOOK = "import sys\nwith open(sys.argv[1], 'a', encoding='utf-8') as f:\n    f.write(sys.stdin.read().strip() + '\\n')\n"
+HOOK = "import sys\nwith open(sys.argv[1], 'a', encoding='utf-8') as f:\n    f.write(sys.stdin.buffer.read().decode('utf-8').strip() + '\\n')\n"  # bytes: the console code page must not decode Claude Code's UTF-8
 HOOK_EVENTS = ("PreToolUse", "SubagentStop", "Stop", "InstructionsLoaded")
 RULE = Path(__file__).resolve().parent / "default-orchestration-rule.md"
 RULE_FILE = "claude-orchestration.md"  # name of the installed rule file, also used for the bundled copy
@@ -41,11 +41,11 @@ ANSWERS = {"map": [value.strip('"') for *_, value, _ in FLOWS], "lookup": ["0.19
 
 
 def json_lines(path: Path) -> list[dict]:
-    """The JSON objects in a JSONL file, skipping a line still being written."""
+    """The JSON objects in a JSONL file, skipping a line still being written (incomplete JSON or a partial UTF-8 sequence)."""
     records = []
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in path.read_bytes().split(b"\n"):
         try:
-            record = json.loads(line)
+            record = json.loads(line.decode("utf-8"))  # UnicodeDecodeError is a ValueError
         except ValueError:
             continue
         if isinstance(record, dict):
@@ -53,8 +53,12 @@ def json_lines(path: Path) -> list[dict]:
     return records
 
 
-def transcript_models(path: str) -> list[str]:
-    models = [(record.get("message") or {}).get("model") for record in json_lines(Path(path))]
+def transcript_models(path: object) -> list[str]:
+    """Models of the assistant messages in a transcript; a path or record of an unexpected shape contributes nothing."""
+    if not isinstance(path, str):
+        return []
+    messages = [record.get("message") for record in json_lines(Path(path))]
+    models = [m.get("model") for m in messages if isinstance(m, dict)]
     return [m for m in models if isinstance(m, str) and m and not m.startswith("<")]
 
 
@@ -68,6 +72,13 @@ def verdict(name: str, want: dict, effort: str | None, models: list[str]) -> dic
     return {"name": name, "want": f"{want.get('model')}/{want.get('effort')}", "seen": f"{','.join(sorted(set(models))) or '-'}/{effort or '-'}", "ok": ok}
 
 
+def effort_level(event: dict) -> str | None:
+    """The effort level a Stop/SubagentStop event reports; any other shape is described so it never equals the expected level."""
+    effort = event.get("effort")
+    level = effort.get("level") if isinstance(effort, dict) else None
+    return level if effort is None or isinstance(level, str) else f"unexpected {json.dumps(effort, default=str)[:40]}"
+
+
 def check_roles(events: list[dict], plugin_dir: Path, roles=ROLES) -> list[dict]:
     stops = {e.get("agent_type"): e for e in events if e.get("hook_event_name") == "SubagentStop"}
     results = []
@@ -77,7 +88,7 @@ def check_roles(events: list[dict], plugin_dir: Path, roles=ROLES) -> list[dict]
         if event is None:
             results.append({"name": role, "want": f"{want.get('model')}/{want.get('effort')}", "seen": "not dispatched", "ok": False})
             continue
-        results.append(verdict(role, want, (event.get("effort") or {}).get("level"), transcript_models(event["agent_transcript_path"])))
+        results.append(verdict(role, want, effort_level(event), transcript_models(event.get("agent_transcript_path"))))
     return results
 
 
@@ -86,7 +97,7 @@ def last_session_turn(events: list[dict]) -> tuple[str | None, list[str]] | None
     stops = [e for e in events if e.get("hook_event_name") == "Stop" and "agent_id" not in e]
     if not stops:
         return None
-    return (stops[-1].get("effort") or {}).get("level"), transcript_models(stops[-1]["transcript_path"])[-1:]
+    return effort_level(stops[-1]), transcript_models(stops[-1].get("transcript_path"))[-1:]
 
 
 def check_skill(events: list[dict], plugin_dir: Path) -> dict:
@@ -138,7 +149,7 @@ def forget_sessions(events: list[dict]) -> int:
     """
     projects = (Path(os.environ.get("CLAUDE_CONFIG_DIR") or "~/.claude").expanduser() / "projects").resolve()
     removed = 0
-    for path in {Path(e["transcript_path"]).resolve() for e in events if e.get("transcript_path") and "agent_id" not in e}:
+    for path in {Path(e["transcript_path"]).resolve() for e in events if isinstance(e.get("transcript_path"), str) and "agent_id" not in e}:
         if path.suffix != ".jsonl" or path.parent.parent != projects:
             continue
         for item in (path, path.with_suffix("")):  # <session>.jsonl and <session>/ with subagent transcripts
@@ -170,7 +181,7 @@ def helpers(sub: str, part: int, count: int) -> list[str]:
 
 
 def write_fixture(root: Path) -> None:
-    """About 4,000 lines in 72 modules: per subsystem, the call chain hides among helper functions and modules."""
+    """About 4,700 lines in 72 modules: per subsystem, the call chain hides among helper functions and modules."""
     for sub, entry, const, value, decoy in FLOWS:
         pkg = root / sub
         pkg.mkdir(parents=True)
@@ -192,18 +203,19 @@ def write_fixture(root: Path) -> None:
 
 def agent_calls(events: list[dict]) -> list[dict]:
     """Agent tool inputs issued by the main session (calls made inside a subagent carry agent_id)."""
-    return [e.get("tool_input") or {} for e in events if e.get("hook_event_name") == "PreToolUse" and e.get("tool_name") in ("Agent", "Task") and "agent_id" not in e]
+    return [e["tool_input"] if isinstance(e.get("tool_input"), dict) else {} for e in events  # a malformed input still counts as a call
+            if e.get("hook_event_name") == "PreToolUse" and e.get("tool_name") in ("Agent", "Task") and "agent_id" not in e]
 
 
 def rule_run(events: list[dict], expect: frozenset | None, source: Path | None = None) -> tuple[bool, str]:
     """Judge one --default-rule run. The rule must be loaded (from under source, when given); then, with expect None,
     no Agent call at all; otherwise only orchestration roles, including every role in expect, without model/effort
     overrides. "Task" is the Agent tool's former name."""
-    loaded = [Path(e.get("file_path", "")) for e in events if e.get("hook_event_name") == "InstructionsLoaded"]
+    loaded = [Path(str(e.get("file_path") or "")) for e in events if e.get("hook_event_name") == "InstructionsLoaded"]
     if not any(p.name == RULE_FILE and (source is None or p.resolve().is_relative_to(source.resolve())) for p in loaded):
         return False, "rule not loaded" + (f" from {source}" if source else "")
     calls = agent_calls(events)
-    types = [c.get("subagent_type") or "general-purpose" for c in calls]
+    types = [str(c.get("subagent_type") or "general-purpose") for c in calls]
     roles = [c for c, t in zip(calls, types) if t.startswith("orchestration:")]
     overrides = sorted({k for c in roles for k in ("model", "effort") if c.get(k)})
     ok = not calls if expect is None else len(roles) == len(calls) > 0 and expect <= set(types) and not overrides
@@ -219,15 +231,15 @@ def check_rule_case(name: str, runs: list[tuple[bool, str]], expect: frozenset |
     return {"name": f"default rule: {name}", "want": want, "seen": f"{passed}/{len(runs)} [" + " | ".join(seen for _, seen in runs) + "]", "ok": ok}
 
 
-def settle(transcript: Path, timeout: float = 15) -> None:
-    """Wait until the TUI has flushed an assistant message to the transcript and the file stops growing."""
+def settle(transcript: Path, timeout: float = 15, interval: float = 1) -> None:
+    """Wait until the TUI has flushed an assistant message to the transcript and the file stops growing, polling every interval seconds."""
     deadline, size = time.monotonic() + timeout, -1
     while time.monotonic() < deadline:
         current = transcript.stat().st_size if transcript.exists() else -1
         if current == size and transcript_models(str(transcript)):
             return
         size = current
-        time.sleep(1)
+        time.sleep(interval)
 
 
 def run_interactive(claude: str, steps: list[tuple[str, object]], plugin_dir: Path | None, work: Path, model: str, timeout: float = 600) -> list[list[dict]]:
@@ -283,7 +295,7 @@ def run_claude(claude: str, prompt: str, plugin_dir: Path | None, work: Path, bu
     if model:
         args += ["--model", model]
     args += list(extra)
-    proc = subprocess.run(args, cwd=cwd or work, capture_output=True, text=True, timeout=900, env={**os.environ, **(env or {})})
+    proc = subprocess.run(args, cwd=cwd or work, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=900, env={**os.environ, **(env or {})})
     try:
         out = json.loads(proc.stdout)
     except ValueError:
@@ -309,6 +321,9 @@ def cost_of(out: dict) -> float:
 
 
 def main() -> int:
+    for stream in (sys.stdout, sys.stderr):  # a FAIL row may quote non-ASCII output; never crash after the paid runs
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="backslashreplace")
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--plugin-dir", type=Path, default=PLUGIN, help="plugin directory to test (default: bundled plugin/)")
     parser.add_argument("--use-installed", action="store_true", help="test the plugin Claude Code already has installed (no --plugin-dir); --plugin-dir then names its files for the expected values")
@@ -347,10 +362,10 @@ def main() -> int:
         return out
 
     def mode(name: str, check) -> None:
-        """Run one mode; a failed run becomes a FAIL row instead of discarding the results so far."""
+        """Run one mode; a failed run or evidence of an unforeseen shape becomes a FAIL row instead of discarding the results so far."""
         try:
             check()
-        except (RuntimeError, subprocess.SubprocessError, OSError, KeyError, ValueError) as e:
+        except (RuntimeError, subprocess.SubprocessError, OSError, KeyError, ValueError, AttributeError, TypeError) as e:
             results.append({"name": name, "want": "a completed run", "seen": f"error: {type(e).__name__}: {str(e)[:160]}", "ok": False})
 
     with tempfile.TemporaryDirectory(prefix="orchestration-smoke-") as td:
@@ -453,7 +468,10 @@ def main() -> int:
         finally:
             if not args.keep_sessions:
                 for work in Path(td).iterdir():
-                    forget_sessions(load_events(work / "hooks.jsonl"))
+                    try:
+                        forget_sessions(load_events(work / "hooks.jsonl"))
+                    except OSError as e:
+                        print(f"could not clean up the sessions of {work.name}: {e}", file=sys.stderr)
     if not results:
         print("no checks selected (pass --roles or a mode such as --skill)")
         return 2

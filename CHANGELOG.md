@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `runtime_smoke.py`: a transcript still being written (partial UTF-8 tail), a hook event or transcript record of an unexpected shape, or non-ASCII text on a narrow console no longer loses a paid run's results; the hook script and Claude Code's output are decoded as UTF-8 regardless of the Windows code page.
 - Tests: the checkout-guard tests run against a temporary copy of the checkout; installs run in-process (suite 0.66 → 0.19 s, 3 subprocess calls left); the six doctor invariant checks, the CLI entry point, `runtime_smoke.write_settings` and `cost_of` are covered; fault injection goes through `install.swap`/`install.run_cli` instead of patching `os`/`subprocess`.
 - `doctor.py` refuses the exact reserved plugin names (`claude`, `anthropic`, `anthropics`, `claude-code`, `claude-mods`, and `official` beside `claude`/`anthropic`), case-insensitively, next to the reserved prefixes.
 - Repository: `.claude/settings.json` sets the subagent spawn depth to 1 and denies `.env` reads for sessions started in the checkout; `main` and `v*` tags are protected by rulesets (required checks, no force-push or deletion), SHA-pinned actions are required, merged branches are deleted.
