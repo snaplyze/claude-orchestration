@@ -8,10 +8,12 @@ Keep changes bounded and evidence-driven: fix the cause, remove what the change 
 python -m unittest discover -v
 python scripts/doctor.py
 sh -n setup.sh
-claude plugin validate --strict ./plugin                    # when Claude Code is installed
-python scripts/runtime_smoke.py --skill --tool-surface      # plugin, profile, or installer changes
+claude plugin validate --strict ./plugin && claude plugin validate --strict .     # when Claude Code is installed
+python scripts/runtime_smoke.py --skill --tool-surface --capabilities --agent-path   # plugin, profile, or installer changes
 python scripts/runtime_smoke.py --roles "" --default-rule   # rule or agent-description changes (all cases, 3 runs each)
 ```
+
+What each runtime mode proves is in [verification](docs/verification.md); the task's row in `docs/plan.md` is updated in the same PR.
 
 The workflows pin Claude Code (`npm install --global @anthropic-ai/claude-code@<version>` in `ci.yml` and `runtime-smoke.yml`). When you re-verify on a newer client, bump both pins and the "tested on" version in the README together.
 

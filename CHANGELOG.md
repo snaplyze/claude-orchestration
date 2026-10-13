@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Docs: the second 2026-10-13 audit is recorded in `docs/plan.md` (A-24…A-40); upstream issue states, the `tools`/`disallowedTools` wording, the PowerShell-on-Windows and plugin-agent ignored-fields statements, the stale project-install paragraph, duplicated CI-matrix and symlink lists, and the acceptance commands in README, CONTRIBUTING, the PR template and `AGENTS.md` are corrected; 15 external claims rechecked against Anthropic's pages (research-sources 17).
 - Agent rules: `AGENTS.md` keeps only the project facts ("Сведения о проекте": commands, invariants, traps, plan, CI and orchestration lines, owner decisions); the general unified policy v15 block is removed because task prompts carry the general rules. Claude Code ≥ 2.1.277 reads it natively while no `CLAUDE.md` exists.
 
 ## 1.5.0 — 2026-10-13
@@ -48,7 +49,7 @@
 - Document API Models capability metadata additions (`line`, thinking disabled, server tools).
 - Keep Claude Code runtime verification distinct from static tests.
 
-## 1.1.0 - 2026-10-06
+## 1.1.0 — 2026-10-06
 - Re-audited against current Claude Code and Claude Platform documentation.
 - Added explicit `model` + `effort` to the orchestrator skill and every bundled subagent.
 - Profiles now materialize the complete root/skill/subagent topology, not only root settings.
@@ -56,5 +57,5 @@
 - Added `xhigh` thorough/API profiles while keeping session-only `max` out of persistent presets.
 - Documented effort precedence, organization caps, concurrency, dynamic workflows, and current plan boundaries.
 
-## 1.0.0 - 2026-10-06
+## 1.0.0 — 2026-10-06
 - Initial Claude-native orchestration distribution.

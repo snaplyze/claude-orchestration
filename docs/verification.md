@@ -29,11 +29,9 @@ commit, so it is never cancelled or replaced by a later one. Test jobs have a
 The token has `contents: read`, checkout does not persist credentials, and all
 external contributors require approval before their fork PR workflows run.
 
-For agents, the project runner mode is `github-hosted` (the `CI-раннеры` line
-in `AGENTS.md`; rules in §14–15). CI status is tracked as A-01 in the
-[plan](plan.md).
-Local Linux tests do not establish Windows/macOS acceptance or Claude Code
-runtime behavior.
+CI is GitHub-hosted only by owner decision (the `CI (владелец)` line in
+`AGENTS.md`). Local Linux tests do not establish Windows/macOS acceptance or
+Claude Code runtime behavior.
 
 ## Claude Code runtime acceptance
 
@@ -139,6 +137,7 @@ On 2026-10-13, Claude Code 2.1.296 (local, subscription; the user settings set O
 | Interactive (tmux server with its socket in the run's work directory) | PASS 11/11: skill and five roles; no tmux server, socket, or session transcript left behind |
 | Released 1.5.0 installed on the owner's machine (`install.py --user --profile max-20x-thorough --default-rule --register`), checked with `--use-installed` | `--status` 3/3 OK; headless 21/21 (roles and skill at the profile's values, reviewer and skill `xhigh`; read-only and capability probes; `--agent`; all five rule cases with the rule loaded from `~/.claude/rules/`, 1 run each), interactive 11/11; $2.21 |
 | `install.py --user --default-rule --register` in an isolated `CLAUDE_CONFIG_DIR` | `--status` 3/3 OK; a rerun left `settings.json` byte-identical; `--uninstall --register` removed the registration |
+| Hosted runs on PR #28 (CI 38377781411, runtime smoke 38377781323) | CI 9/9 jobs; smoke: bundled 15/15, installed `max-20x-thorough` 6/6, user install under a temporary `CLAUDE_CONFIG_DIR` `--status` 3/3 and the `lookup` case loaded the rule from `$CLAUDE_CONFIG_DIR/rules/` |
 
 On 2026-10-09, Claude Code 2.1.295 (local, subscription):
 
@@ -155,18 +154,20 @@ On 2026-10-09, Claude Code 2.1.295 (local, subscription):
 | User-scope install (`install.py --user --profile max-20x-thorough --default-rule`, local marketplace loaded in place), checked with `--use-installed` | PASS 20/20: skill and reviewer `claude-opus-5-5`/xhigh, researcher/worker/tester `claude-sonnet-5-5`/high, explorer `claude-haiku-5-5`/low, headless and interactive; read-only and `--agent` as above |
 | Default-orchestration rule in the user `CLAUDE.md` | Loaded in a folder without project instructions. A task with three independent workstreams was delegated to `orchestration:explorer`, `orchestration:researcher`, and `orchestration:reviewer` (not built-in agents); a trivial task and a small four-file read were done directly; with a project `CLAUDE.md` forbidding subagents, nothing was delegated |
 
-The reviewer result shows behavior, not a guarantee: subagent frontmatter can
-list only whole tools, and `Bash(...)` in `disallowedTools` removes Bash
-entirely, so a plugin cannot limit the reviewer's Bash to read-only commands.
-Use a session `permissions.deny` rule when a hard limit is needed.
+The reviewer result shows behavior, not a guarantee: a `disallowedTools` entry
+with a specifier such as `Bash(git push *)` removes the whole Bash tool from a
+subagent (documented), and the `tools` field is documented for exact tool
+names, MCP server patterns and `Agent(<names>)`, not for command specifiers,
+so a plugin cannot limit the reviewer's Bash to read-only commands. Use a
+session `permissions.deny` rule when a hard limit is needed.
 
 ## Current upstream caveats
 
-Claude Code documentation supports `effort` in skill and subagent frontmatter, but upstream issue reports show path-specific inconsistencies (checked 2026-10-09). On Claude Code 2.1.295, `runtime_smoke.py` found Agent-tool dispatch and `/orchestration:orchestrate` (headless and interactive) applying frontmatter model and effort, and `claude --agent` applying the model but not the effort:
+Claude Code documentation supports `effort` in skill and subagent frontmatter, but upstream issue reports show path-specific inconsistencies (issue states rechecked 2026-10-13). On Claude Code 2.1.295 and 2.1.296, `runtime_smoke.py` found Agent-tool dispatch and `/orchestration:orchestrate` (headless and interactive) applying frontmatter model and effort, and `claude --agent` applying the model but not the effort:
 
-- ordinary Agent-tool subagent dispatch runs at the subagent's `effort`: reporters' observations in [#82259](https://github.com/anthropics/claude-code/issues/82259) and [#83252](https://github.com/anthropics/claude-code/issues/83252) (v2.1.220; the latter found only a display defect), not a maintainer confirmation;
-- `claude -p --agent <name>` ignored agent frontmatter effort in [#82259](https://github.com/anthropics/claude-code/issues/82259) (v2.1.220), closed 2026-10-08 as inactive rather than fixed;
-- inline skill execution can stay at session effort ([#69267](https://github.com/anthropics/claude-code/issues/69267), open), and adding `effort` to a skill with `model` can drop the model override ([#81618](https://github.com/anthropics/claude-code/issues/81618), open, v2.1.220).
+- ordinary Agent-tool subagent dispatch runs at the subagent's `effort`: reporters' observations in [#82259](https://github.com/anthropics/claude-code/issues/82259) and [#83252](https://github.com/anthropics/claude-code/issues/83252) (v2.1.220; the latter found only a display defect and was closed as not planned by the stale bot on 2026-09-07), not a maintainer confirmation;
+- `claude -p --agent <name>` ignored agent frontmatter effort in [#82259](https://github.com/anthropics/claude-code/issues/82259) (v2.1.220), closed 2026-10-08 as not planned by the stale bot rather than fixed;
+- inline skill execution can stay at session effort ([#69267](https://github.com/anthropics/claude-code/issues/69267), open, stale label removed 2026-09-09), and adding `effort` to a skill with `model` can drop the model override ([#81618](https://github.com/anthropics/claude-code/issues/81618), open, labeled bug and stale, v2.1.220).
 
 For that reason, the project installer also writes the selected **root** model and effort into project `.claude/settings.json`; it does not rely solely on skill frontmatter for coordinator effort. The orchestration skill is manual-only (`disable-model-invocation: true`) so normal use starts at a user-invoked turn boundary. Subagents are intended to run through normal foreground delegation, not as `--agent` personas or experimental teammates when exact effort is part of acceptance. To run a role as the session anyway, pass its effort explicitly, for example `claude --agent orchestration:reviewer --effort high`.
 
