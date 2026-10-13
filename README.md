@@ -44,7 +44,7 @@ claude plugin marketplace add ~/.claude-orchestration
 claude plugin install orchestration@orchestration-local --scope user
 ```
 
-`--user` builds a local marketplace in `~/.claude-orchestration` whose plugin already carries the profile; Claude Code loads it in place. `--default-rule` adds a managed block to your user `CLAUDE.md` that makes the plugin's roles the default way to delegate unless a project's own instructions say otherwise. On Windows use `.\setup.ps1 -User -Profile max-20x-thorough -DefaultRule`.
+`--user` builds a local marketplace in `~/.claude-orchestration` whose plugin already carries the profile; Claude Code loads it in place. `--default-rule` installs the rule file `~/.claude/rules/claude-orchestration.md`, which makes the plugin's roles the default way to delegate in every repository unless the project's own instructions say otherwise. On Windows use `.\setup.ps1 -User -Profile max-20x-thorough -DefaultRule`.
 
 ### Project scope
 

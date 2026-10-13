@@ -119,17 +119,64 @@ class DistributionTests(unittest.TestCase):
             self.assertEqual((t/".claude/settings.json").read_bytes(),before); self.assertFalse(dest.exists())
             kept=[p for p in (t/".claude/plugins").glob(".orchestration-*/*/.claude-plugin/plugin.json")]
             self.assertEqual([p.read_bytes() for p in kept],[manifest])
-    def test_user_marketplace_with_profile_and_managed_rule(self):
+    def test_user_marketplace_with_profile_and_rule_file(self):
         with tempfile.TemporaryDirectory() as td:
-            t=Path(td); mkt=t/"mkt"; rule=t/"cfg/CLAUDE.md"; rule.parent.mkdir(); rule.write_text("# Mine\n")
-            for _ in range(2): install.install_user(mkt,"max-20x-thorough",rule)
+            t=Path(td); mkt=t/"mkt"; cfg=t/"cfg"; cfg.mkdir(); (cfg/"CLAUDE.md").write_bytes(b"# Mine\r\n")
+            for _ in range(2): install.install_user(mkt,"max-20x-thorough",cfg)
             m=json.loads((mkt/".claude-plugin/marketplace.json").read_text()); self.assertEqual((m["name"],m["plugins"][0]["name"],m["plugins"][0]["source"]),("orchestration-local","orchestration","./plugin"))
             self.assertEqual(frontmatter(mkt/"plugin/agents/reviewer.md")["effort"],"xhigh")
-            text=rule.read_text(); self.assertTrue(text.startswith("# Mine\n")); self.assertEqual(text.count(install.RULE_BEGIN),1); self.assertIn("orchestration:worker",text)
-            self.assertEqual(sorted(p.name for p in mkt.iterdir()),[".claude-plugin","plugin"])
-            install.uninstall_user(mkt,rule); self.assertEqual(rule.read_text(),"# Mine\n"); self.assertFalse(mkt.exists())
-            rule.unlink(); install.install_user(mkt,"pro-balanced",rule); install.uninstall_user(mkt,rule); self.assertFalse(rule.exists())
+            rule=cfg/"rules/claude-orchestration.md"; self.assertTrue(rule.read_bytes().startswith(install.RULE_HEADER)); self.assertIn(b"orchestration:worker",rule.read_bytes())
+            self.assertEqual((cfg/"CLAUDE.md").read_bytes(),b"# Mine\r\n"); self.assertEqual(sorted(p.name for p in mkt.iterdir()),[".claude-plugin","plugin"])
+            self.assertEqual(install.uninstall_user(mkt,cfg),[]); self.assertFalse(mkt.exists()); self.assertFalse((cfg/"rules").exists()); self.assertEqual((cfg/"CLAUDE.md").read_bytes(),b"# Mine\r\n")
             with self.assertRaisesRegex(ValueError,"unknown profile"): install.install_user(mkt,"nope")
+            self.assertFalse(mkt.exists())
+    def test_user_mode_touches_only_directories_it_built(self):
+        with tempfile.TemporaryDirectory() as td:
+            t=Path(td); home=t/"home"; (home/"Documents").mkdir(parents=True); (home/"Documents/thesis.txt").write_text("x")
+            proj=t/"proj"; (proj/"plugin").mkdir(parents=True); (proj/"plugin/mine.py").write_text("y")
+            for action in (lambda: install.uninstall_user(home),lambda: install.install_user(proj,"pro-balanced"),lambda: install.install_user(ROOT/"build","pro-balanced"),lambda: install.install_user(ROOT.parent,"pro-balanced")):
+                with self.assertRaises(ValueError): action()
+            self.assertEqual((home/"Documents/thesis.txt").read_text(),"x"); self.assertEqual(sorted(p.name for p in proj.rglob("*")),["mine.py","plugin"]); self.assertFalse((ROOT/"build").exists())
+            mkt=t/"mkt"; install.install_user(mkt,"pro-balanced"); (mkt/"notes.txt").write_text("z")
+            self.assertEqual([p.name for p in install.uninstall_user(mkt)],["notes.txt"]); self.assertEqual(sorted(p.name for p in mkt.iterdir()),["notes.txt"])
+            ext=t/"ext"; ext.mkdir(); link=t/"link"
+            try: link.symlink_to(ext,target_is_directory=True)
+            except OSError: self.skipTest("symlink unavailable")
+            (mkt/"notes.txt").unlink(); install.install_user(mkt,"pro-balanced"); shutil.rmtree(mkt/"plugin"); (mkt/"plugin").symlink_to(ext,target_is_directory=True)
+            for action in (lambda: install.install_user(link,"pro-balanced"),lambda: install.uninstall_user(link),lambda: install.install_user(mkt,"pro-balanced"),lambda: install.uninstall_user(mkt)):
+                with self.assertRaisesRegex(ValueError,"symlink"): action()
+            self.assertEqual(list(ext.iterdir()),[])
+    def test_rule_install_migrates_the_legacy_claude_md_block(self):
+        begin,end=install.LEGACY_BEGIN,install.LEGACY_END
+        cases={b"# Mine\r\nnotes\r\n\n"+begin+b"\nold rule\n"+end+b"\nafter\r\n":b"# Mine\r\nnotes\r\nafter\r\n",begin+b"\nold rule\n"+end+b"\n":None}
+        for legacy,expected in cases.items():
+            with self.subTest(legacy=legacy), tempfile.TemporaryDirectory() as td:
+                cfg=Path(td); (cfg/"CLAUDE.md").write_bytes(legacy); install.transaction(install.rule_writes(cfg,True))
+                self.assertEqual((cfg/"CLAUDE.md").read_bytes() if (cfg/"CLAUDE.md").exists() else None,expected); self.assertTrue((cfg/"rules/claude-orchestration.md").exists())
+        for legacy in (b"# Mine\n"+begin+b"\nold\n\nMy notes\n",b"x\n"+end+b"\ny\n"+begin+b"\nz\n",(begin+b"\na\n"+end+b"\n")*2):
+            with self.subTest(malformed=legacy), tempfile.TemporaryDirectory() as td:
+                cfg=Path(td); (cfg/"CLAUDE.md").write_bytes(legacy)
+                with self.assertRaisesRegex(ValueError,"malformed"): install.transaction(install.rule_writes(cfg,True))
+                self.assertEqual((cfg/"CLAUDE.md").read_bytes(),legacy); self.assertFalse((cfg/"rules").exists())
+    def test_rule_refuses_symlinks_and_files_it_did_not_write(self):
+        with tempfile.TemporaryDirectory() as td:
+            cfg=Path(td)/"cfg"; (cfg/"rules").mkdir(parents=True); rule=cfg/"rules/claude-orchestration.md"; rule.write_text("mine")
+            with self.assertRaisesRegex(ValueError,"not written by this installer"): install.rule_writes(cfg,True)
+            rule.unlink(); real=Path(td)/"real.md"; real.write_bytes(install.LEGACY_BEGIN+b"\nx\n"+install.LEGACY_END+b"\n")
+            try: (cfg/"CLAUDE.md").symlink_to(real)
+            except OSError: self.skipTest("symlink unavailable")
+            with self.assertRaisesRegex(ValueError,"symlink"): install.rule_writes(cfg,True)
+            rule.symlink_to(real)
+            with self.assertRaisesRegex(ValueError,"symlink"): install.rule_writes(cfg,False)
+    def test_failed_first_user_install_leaves_nothing(self):
+        with tempfile.TemporaryDirectory() as td:
+            t=Path(td).resolve(); mkt=t/"mkt"; cfg=t/"cfg"; cfg.mkdir(); legacy=b"# Mine\n\n"+install.LEGACY_BEGIN+b"\nold\n"+install.LEGACY_END+b"\n"; (cfg/"CLAUDE.md").write_bytes(legacy)
+            real_replace=os.replace
+            def fail_into_plugin(src,dst):
+                if Path(dst)==mkt/"plugin": raise OSError("injected")
+                return real_replace(src,dst)
+            with mock.patch.object(install.os,"replace",fail_into_plugin), self.assertRaises(OSError): install.install_user(mkt,"pro-balanced",cfg)
+            self.assertFalse(mkt.exists()); self.assertEqual(sorted(p.name for p in cfg.iterdir()),["CLAUDE.md"]); self.assertEqual((cfg/"CLAUDE.md").read_bytes(),legacy)
     def test_symlinks_and_unknown_profile_names_rejected(self):
         with tempfile.TemporaryDirectory() as td:
             t=Path(td)/"project"; ext=Path(td)/"external"; t.mkdir(); ext.mkdir(); (t/".claude").mkdir()

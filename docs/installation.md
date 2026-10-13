@@ -45,12 +45,21 @@ on macOS and Linux.
   plugin with the profile's model/effort in every frontmatter. Claude Code
   loads a plugin from a local-path marketplace in place, so rerunning the
   command (for example with another `--profile`) updates the installed plugin;
-  restart sessions to pick it up.
-- `--default-rule` adds a managed block to your user `CLAUDE.md`
-  (`$CLAUDE_CONFIG_DIR/CLAUDE.md` or `~/.claude/CLAUDE.md`), marked
-  `claude-orchestration:managed`, that makes the plugin's roles the default way
-  to delegate unless project instructions say otherwise. Rerunning replaces the
-  block; your other text is kept. The text is `scripts/default-orchestration-rule.md`.
+  restart sessions to pick it up. The directory must be new, empty, or one the
+  installer built (its manifest is named `orchestration-local`); anything else,
+  and any symlink or junction there, is refused. Uninstall removes only what
+  the installer built and keeps the directory if other files remain in it.
+- `--default-rule` installs the rule as its own file,
+  `rules/claude-orchestration.md` in the Claude config directory
+  (`$CLAUDE_CONFIG_DIR` or `~/.claude`). User rules apply to every project, so
+  the plugin's roles become the default way to delegate wherever project
+  instructions do not say otherwise. The installer owns that file whole
+  (rewritten on install, deleted on uninstall) and refuses to overwrite a file
+  of that name it did not write. The text is `scripts/default-orchestration-rule.md`.
+  Installers before 1.5 kept the rule as a `claude-orchestration:managed` block
+  in the user `CLAUDE.md`; installing or removing the rule takes that block out
+  and leaves the rest of the file byte for byte, or refuses without writing if
+  the markers are damaged.
 - Root `model`/`effortLevel` are not written in user mode: the skill and each
   role carry their own, and your global defaults stay yours.
 - Do not install `orchestration@snaplyze-orchestration` at the same time; both
