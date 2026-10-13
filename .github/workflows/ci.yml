@@ -60,6 +60,14 @@ jobs:
           ./setup.ps1 -DefaultRule -Uninstall
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           if (Test-Path (Join-Path $env:CLAUDE_CONFIG_DIR 'rules/claude-orchestration.md')) { throw 'rule not removed' }
+          $stub = (New-Item -ItemType Directory -Path (Join-Path $env:RUNNER_TEMP 'ps-stub')).FullName
+          Set-Content -Path (Join-Path $stub 'claude.cmd') -Value '@echo []'
+          $out = ./setup.ps1 -Status -Claude (Join-Path $stub 'claude.cmd')
+          if ($LASTEXITCODE -ne 1 -or -not ($out -match '^TODO')) { throw "status with a stub claude: exit $LASTEXITCODE, output: $out" }
+          $env:PATH = $stub
+          ./setup.ps1 -Status
+          if ($LASTEXITCODE -eq 0) { throw 'launcher exited 0 without python' }
+          exit 0  # the expected non-zero $LASTEXITCODE above must not fail the step
   shell:
     runs-on: ubuntu-latest
     timeout-minutes: 5

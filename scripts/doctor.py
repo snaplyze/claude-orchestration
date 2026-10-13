@@ -2,13 +2,10 @@
 """Static validation of the distribution: manifest, plugin frontmatter, and profiles."""
 from pathlib import Path
 import json, re, sys
-from install import frontmatter
+from install import frontmatter, MODELS, ROOT_MODELS, EFFORTS  # the allowed names: the installer refuses anything else before writing
 
 R = Path(__file__).resolve().parents[1]
 AGENTS = {"explorer", "researcher", "worker", "tester", "reviewer"}
-MODELS = {"haiku", "sonnet", "opus"}
-ROOT_MODELS = {"sonnet", "opus"}
-EFFORTS = {"low", "medium", "high", "xhigh"}
 RESERVED = ("claude-", "anthropic-", "anthropics-", "cc-plugin-")
 RESERVED_NAMES = {"claude", "anthropic", "anthropics", "claude-code", "claude-mods"}
 PROFILE_COUNT = 8
@@ -69,6 +66,7 @@ def check(root: Path = R) -> list[str]:
             if set(d) != {"skill", "agents"}: errors.append(f"{p.name}: invalid schema"); continue
             if set(d["agents"]) != AGENTS: errors.append(f"{p.name}: incomplete agents")
             errors += pair_errors(f"{p.name} skill", d["skill"].get("model"), d["skill"].get("effort"), ROOT_MODELS)
+            if set(d["skill"]) != {"model", "effort"}: errors.append(f"{p.name} skill: keys must be model and effort")
             for agent, pair in d["agents"].items():
                 if not isinstance(pair, list) or len(pair) != 2: errors.append(f"{p.name} {agent}: expected [model, effort]"); continue
                 errors += pair_errors(f"{p.name} {agent}", *pair)

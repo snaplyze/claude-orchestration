@@ -14,9 +14,14 @@ PROFILES = ROOT / "profiles"
 MARKER = "claude-orchestration"
 LOCAL_MARKETPLACE = "orchestration-local"
 PLUGIN_ID = f"orchestration@{LOCAL_MARKETPLACE}"
+DEFAULT_MARKETPLACE = Path("~/.claude-orchestration")
 RULE_TEMPLATE = Path(__file__).resolve().parent / "default-orchestration-rule.md"
 RULE_FILE = "claude-orchestration.md"
 RULE_HEADER = b"<!-- Managed by claude-orchestration (scripts/install.py): rewritten on install, removed on uninstall. -->\n"
+SKILL_FILE = "skills/orchestrate/SKILL.md"
+MODELS = {"haiku", "sonnet", "opus"}
+ROOT_MODELS = {"sonnet", "opus"}  # the skill runs in the session's model, which Claude Code does not downgrade to haiku
+EFFORTS = {"low", "medium", "high", "xhigh"}
 LOCK_FILE = ".orchestration.lock"  # held by locked() in the directory a run modifies, so two runs on one target never overlap
 JUNCTION = 0xA0000003  # IO_REPARSE_TAG_MOUNT_POINT
 swap = os.replace  # directory swaps in transaction(); a module attribute so tests can inject failures without patching os
@@ -149,12 +154,44 @@ def dump_settings(settings: dict) -> bytes:
     return (json.dumps(settings, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
 
 
+def profile_names() -> set[str]:
+    return {p.stem for p in PROFILES.glob("*.json")}
+
+
+def pair(where: str, model, effort, models: set[str] = MODELS) -> dict[str, str]:
+    """The model/effort frontmatter values for where, each one of the allowed names: nothing else (an extra key, a
+    newline, a control character) can reach a frontmatter this way."""
+    if not isinstance(model, str) or model not in models:
+        raise ValueError(f"{where}: unsupported model {model!r}")
+    if not isinstance(effort, str) or effort not in EFFORTS:
+        raise ValueError(f"{where}: invalid effort {effort!r}")
+    return {"model": model, "effort": effort}
+
+
+def slots(profile: dict) -> dict[str, dict[str, str]]:
+    """The model/effort pair a profile sets per plugin file (relative path), checked by pair()."""
+    skill = profile.get("skill") if isinstance(profile.get("skill"), dict) else {}
+    agents = profile.get("agents") if isinstance(profile.get("agents"), dict) else {}
+    values = {SKILL_FILE: pair("skill", skill.get("model"), skill.get("effort"), ROOT_MODELS)}
+    for name, config in agents.items():
+        if not isinstance(config, list) or len(config) != 2:
+            raise ValueError(f"invalid agent profile: {name}")
+        values[f"agents/{name}.md"] = pair(f"agent {name}", *config)
+    return values
+
+
 def profile_data(name: str) -> dict:
-    if name not in {p.stem for p in PROFILES.glob("*.json")}:
+    """The bundled profile named name, its skill and agents checked (keys, string values, allowed names) before any write."""
+    if name not in profile_names():
         raise ValueError(f"unknown profile: {name}; pass --profile with a name from {PROFILES}")
     data = load_json(PROFILES / f"{name}.json")
-    if not all(k in data for k in ("skill", "agents")):
+    skill, agents = data.get("skill"), data.get("agents")
+    if not (isinstance(skill, dict) and set(skill) == {"model", "effort"} and isinstance(agents, dict) and set(agents) == {p.stem for p in (PLUGIN / "agents").glob("*.md")}):
         raise ValueError(f"invalid profile schema: {name}")
+    try:
+        slots(data)
+    except ValueError as e:
+        raise ValueError(f"invalid profile {name}: {e}") from None
     return data
 
 
@@ -198,9 +235,9 @@ def frontmatter(path: Path) -> dict[str, str]:
     return {key_of(line): unquote(line.split(":", 1)[1]) for line in lines if key_of(line)}
 
 
-def patch_frontmatter(path: Path, values: dict[str, str]) -> None:
-    """Set the given keys in the frontmatter, touching no other line and keeping each line's own ending."""
-    lines, body, (opening, closing) = read_frontmatter(path)
+def patched(text: str, values: dict[str, str], path: Path) -> str:
+    """text with the frontmatter keys in values set (appended when absent), every line keeping its own ending; path names the file in errors."""
+    lines, body, (opening, closing) = split_frontmatter(text, path)
     output, seen, ending = [], set(), "\r" if closing.endswith("\r") else ""
     for line in lines:
         key = key_of(line)
@@ -210,16 +247,46 @@ def patch_frontmatter(path: Path, values: dict[str, str]) -> None:
         else:
             output.append(line)
     output += [f"{key}: {value}{ending}" for key, value in values.items() if key not in seen]
+    return "\n".join([opening, *output, closing]) + "\n" + body
+
+
+def patch_frontmatter(path: Path, values: dict[str, str]) -> None:
+    with path.open(encoding="utf-8", newline="") as fh:  # no newline translation: every line keeps its own ending
+        text = fh.read()
     with path.open("w", encoding="utf-8", newline="") as fh:
-        fh.write("\n".join([opening, *output, closing]) + "\n" + body)
+        fh.write(patched(text, values, path))
 
 
-def materialize_profile(stage: Path, profile: dict) -> None:
-    patch_frontmatter(stage / "skills/orchestrate/SKILL.md", profile["skill"])
-    for name, config in profile["agents"].items():
-        if not isinstance(config, list) or len(config) != 2:
-            raise ValueError(f"invalid agent profile: {name}")
-        patch_frontmatter(stage / "agents" / f"{name}.md", {"model": config[0], "effort": config[1]})
+def tree(directory: Path) -> dict[str, bytes]:
+    """Every file under directory: relative POSIX path -> bytes."""
+    return {p.relative_to(directory).as_posix(): p.read_bytes() for p in directory.rglob("*") if p.is_file()}
+
+
+def materialize_profile(files: dict[str, bytes], profile: dict) -> None:
+    """Set the profile's model/effort in the skill and agent frontmatter of files (a build: relative path -> bytes)."""
+    for rel, values in slots(profile).items():
+        if rel not in files:
+            raise ValueError(f"profile names a file the plugin lacks: {rel}")
+        files[rel] = patched(files[rel].decode("utf-8"), values, Path(rel)).encode("utf-8")
+
+
+def build(profile_name: str | None) -> dict[str, bytes]:
+    """The plugin files, relative path -> bytes, as installing profile_name (None: as bundled) from this checkout writes them."""
+    files = tree(PLUGIN)
+    if profile_name:
+        materialize_profile(files, profile_data(profile_name))
+    return files
+
+
+def marker_of(settings: dict, path: Path) -> dict | None:
+    """The marker apply_settings() recorded in settings, or None; a marker of another shape is refused before any change."""
+    marker = settings.get(MARKER)
+    if marker is None:
+        return None
+    if not (isinstance(marker, dict) and isinstance(marker.get("profile"), str) and isinstance(marker.get("managedKeys"), list)
+            and all(isinstance(key, str) for key in marker["managedKeys"]) and all(isinstance(marker.get(key, {}), dict) for key in ("previous", "applied"))):
+        raise ValueError(f"damaged {MARKER} marker in {path}; remove it by hand")
+    return marker
 
 
 def release_settings(settings: dict) -> bool:
@@ -267,9 +334,9 @@ def plugin_destination(target: Path) -> Path:
     return path
 
 
-def transaction(writes: dict[Path, bytes | None], dest: Path | None = None, profile: dict | None = None, remove: bool = False) -> None:
-    """Apply file writes (None removes a file) and, with dest, stage the plugin (with profile) beside dest and swap it
-    in, or with remove take dest away (parked beside it until the writes are through). Callers hold locked().
+def transaction(writes: dict[Path, bytes | None], dest: Path | None = None, files: dict[str, bytes] | None = None, remove: bool = False) -> None:
+    """Apply file writes (None removes a file) and, with dest, stage the plugin (files, a build()) beside dest and swap
+    it in, or with remove take dest away (parked beside it until the writes are through). Callers hold locked().
 
     On failure the previous plugin directory is restored, every file gets its previous bytes back, and directories
     created here are removed again; each restore step runs on its own, and the original error propagates. After a
@@ -285,9 +352,9 @@ def transaction(writes: dict[Path, bytes | None], dest: Path | None = None, prof
             work = Path(tempfile.mkdtemp(prefix=".orchestration-", dir=dest.parent))
             stage, previous = work / "stage", work / "previous"
             if not remove:
-                shutil.copytree(PLUGIN, stage)
-                if profile:
-                    materialize_profile(stage, profile)
+                for rel, data in files.items():
+                    (stage / rel).parent.mkdir(parents=True, exist_ok=True)
+                    (stage / rel).write_bytes(data)
         for path, data in writes.items():
             if data != before[path]:
                 put(path, data)
@@ -339,13 +406,14 @@ def install(target: Path, profile_name: str | None = None) -> Path:
     settings_path = target / ".claude/settings.json"
     with locked(target / ".claude"):
         settings = load_json(settings_path)
-        refresh = profile_name is None  # the profile comes from the marker: the user's changes to managed keys stay
-        if refresh and isinstance(settings.get(MARKER), dict):
-            profile_name = settings[MARKER].get("profile")
+        marker = marker_of(settings, settings_path)
+        refresh = not profile_name  # None or "": the profile comes from the marker, and the user's changes to managed keys stay
+        profile_name = profile_name or (marker["profile"] if marker else None)
         profile = profile_data(profile_name) if profile_name else None
+        files = build(profile_name)
         if profile:
             apply_settings(settings, profile_name, profile, keep_changes=refresh)
-        transaction({settings_path: dump_settings(settings)} if profile else {}, dest, profile)
+        transaction({settings_path: dump_settings(settings)} if profile else {}, dest, files)
     return dest
 
 
@@ -358,6 +426,7 @@ def uninstall(target: Path) -> None:
         return  # nothing to remove, nothing to lock
     with locked(target / ".claude"):
         settings = load_json(settings_path)
+        marker_of(settings, settings_path)
         writes = {settings_path: dump_settings(settings) if settings else None} if release_settings(settings) else {}
         transaction(writes, dest, remove=True)
         remove_empty([dest.parent])
@@ -368,27 +437,41 @@ def rule_path(config_dir: Path) -> Path:
 
 
 def rule_writes(config_dir: Path, enable: bool) -> dict[Path, bytes | None]:
-    """File changes that install (enable) or remove the default rule."""
+    """File changes that install (enable) or remove the default rule; neither the rule nor its rules/ directory may be a link."""
     rule = rule_path(config_dir)
-    if is_link(rule):
-        raise ValueError(f"refusing symlink: {rule}")
+    for path in (rule.parent, rule):
+        if is_link(path):
+            raise ValueError(f"refusing symlink: {path}")
     if rule.exists() and not rule.read_bytes().startswith(RULE_HEADER):
         raise ValueError(f"{rule} was not written by this installer; move it away, then rerun")
     return {rule: RULE_HEADER + RULE_TEMPLATE.read_bytes() if enable else None}
 
 
-def marketplace_dir(root: Path) -> Path:
-    """Resolve the local marketplace directory: absent, empty, or one this installer built; never a link."""
+def rules_dir(config_dir: Path | None) -> Path:
+    """Where Claude Code reads user rules, resolved: every Markdown file there is loaded into every session."""
+    return (config_dir.expanduser() if config_dir else claude_config_dir()).resolve() / "rules"
+
+
+def vacant(root: Path) -> bool:
+    """Absent, or a directory holding nothing but the lock file."""
+    return not root.exists() or (root.is_dir() and not any(p.name != LOCK_FILE for p in root.iterdir()))
+
+
+def marketplace_dir(root: Path, config_dir: Path | None = None) -> Path:
+    """Resolve the local marketplace directory: absent, empty, or one this installer built; never a link, never in rules/."""
     root = root.expanduser()
     if is_link(root):
         raise ValueError(f"refusing symlink as marketplace directory: {root}")
     root = root.resolve()
     if root == ROOT or ROOT in root.parents:
         raise ValueError("marketplace directory must be outside the distribution checkout")
+    rules = rules_dir(config_dir)
+    if root == rules or rules in root.parents:
+        raise ValueError(f"marketplace directory must not be inside {rules}, where Claude Code reads every Markdown file as a user rule")
     for path in (root / ".claude-plugin", root / ".claude-plugin/marketplace.json", root / "plugin"):
         if is_link(path):
             raise ValueError(f"refusing symlink in marketplace directory: {path}")
-    if root.exists() and not (root.is_dir() and (not any(p.name != LOCK_FILE for p in root.iterdir()) or built_here(root))):
+    if not (vacant(root) or built_here(root)):
         raise ValueError(f"{root} is neither empty nor an {LOCAL_MARKETPLACE} marketplace; pass another --marketplace-dir")
     return root
 
@@ -402,15 +485,15 @@ def built_here(root: Path) -> bool:
 
 def install_user(root: Path, profile_name: str, config_dir: Path | None = None) -> Path:
     """Build a local marketplace whose plugin carries the profile; with config_dir, also install the default rule there."""
-    root = marketplace_dir(root)
-    profile = profile_data(profile_name)
+    root = marketplace_dir(root, config_dir)
+    files = build(profile_name)
     manifest = {"name": LOCAL_MARKETPLACE, "description": f"Local Claude Orchestration build ({profile_name} profile)", "owner": {"name": "local"}, "plugins": [{"name": "orchestration", "source": "./plugin",
                 "description": f"Claude Orchestration with the {profile_name} profile"}]}
     with locked(root), locked(config_dir) if config_dir else contextlib.nullcontext():
         writes = {root / ".claude-plugin/marketplace.json": (json.dumps(manifest, indent=2) + "\n").encode("utf-8")}
         if config_dir:
             writes |= rule_writes(config_dir, True)
-        transaction(writes, root / "plugin", profile)
+        transaction(writes, root / "plugin", files)
     return root / "plugin"
 
 
@@ -424,7 +507,7 @@ def uninstall_user(root: Path, config_dir: Path | None = None) -> list[Path]:
 
     Returns the entries left in the marketplace directory because this installer did not create them.
     """
-    root = marketplace_dir(root)
+    root = marketplace_dir(root, config_dir)
     if config_dir:
         set_rule(config_dir, False)
     if not root.exists():
@@ -439,8 +522,18 @@ def uninstall_user(root: Path, config_dir: Path | None = None) -> list[Path]:
         return sorted(p for p in root.iterdir() if p.name != LOCK_FILE)
 
 
-def claude_json(claude: list[str], *args: str):
+def find_claude(name: str) -> str | None:
+    """The claude executable's full path (so a Windows npm shim, claude.cmd, runs too), or None when which() finds none.
+    Windows which() also looks in the current directory first (NeedCurrentDirectoryForExePathW; before Python 3.12
+    unconditionally) and its path= argument does not stop that, so a bare name counts only with an absolute hit."""
+    found = shutil.which(name)
+    return found if found and (os.path.isabs(found) or os.path.dirname(name)) else None
+
+
+def claude_json(claude: list[str] | None, *args: str):
     """Run `claude plugin <args> --json` and return its parsed result (a listing, or one result line)."""
+    if not claude:
+        raise ValueError("claude CLI not found; pass --claude <path to the executable>")
     proc = run_cli([*claude, "plugin", *args, "--json"], capture_output=True, text=True, timeout=300)
     out = proc.stdout.strip()
     for text in (out, out.splitlines()[-1] if out else ""):
@@ -457,25 +550,43 @@ def claude_json(claude: list[str], *args: str):
     return result
 
 
-def registration(claude: list[str], root: Path) -> tuple[dict | None, dict | None, list[str]]:
-    """Our marketplace declaration, our user-scope plugin entry, and other enabled plugins named orchestration."""
-    marketplace = next((m for m in claude_json(claude, "marketplace", "list") if m.get("name") == LOCAL_MARKETPLACE), None)
-    plugins = claude_json(claude, "list")
+def listing(claude: list[str] | None, *args: str) -> list[dict]:
+    """claude_json() for a listing command, whose result must be a list of objects."""
+    result = claude_json(claude, *args)
+    if not isinstance(result, list) or not all(isinstance(entry, dict) for entry in result):
+        raise ValueError(f"claude plugin {' '.join(args)} --json did not return a list of objects")
+    return result
+
+
+def plugin_entry(claude: list[str] | None) -> tuple[dict | None, list[str]]:
+    """Our user-scope plugin entry from `claude plugin list`, and other enabled plugins named orchestration."""
+    plugins = listing(claude, "list")
     plugin = next((p for p in plugins if p.get("id") == PLUGIN_ID and p.get("scope") == "user"), None)
-    others = sorted({p["id"] for p in plugins if str(p.get("id")).startswith("orchestration@") and p["id"] != PLUGIN_ID and p.get("enabled")})
-    return marketplace, plugin, others
+    others = sorted({str(p["id"]) for p in plugins if str(p.get("id")).startswith("orchestration@") and p["id"] != PLUGIN_ID and p.get("enabled")})
+    return plugin, others
+
+
+def marketplace_entry(claude: list[str] | None) -> dict | None:
+    """Our marketplace declaration from `claude plugin marketplace list`."""
+    return next((m for m in listing(claude, "marketplace", "list") if m.get("name") == LOCAL_MARKETPLACE), None)
+
+
+def marketplace_path(marketplace: dict) -> Path:
+    return Path(str(marketplace.get("path") or "")).resolve()
 
 
 def loads_from(plugin: dict | None, root: Path) -> bool:
-    return bool(plugin and plugin.get("enabled") and plugin.get("readFromFolder") and Path(plugin["readFromFolder"]).resolve() == root / "plugin")
+    folder = plugin.get("readFromFolder") if plugin else None
+    return bool(plugin and plugin.get("enabled") and isinstance(folder, str) and Path(folder).resolve() == root / "plugin")
 
 
-def register(claude: list[str], root: Path) -> None:
+def register(claude: list[str] | None, root: Path) -> None:
     """Add the local marketplace and install/enable its plugin at user scope with the claude CLI; a rerun changes nothing."""
-    marketplace, plugin, others = registration(claude, root)
+    plugin, others = plugin_entry(claude)
     if others:
         raise ValueError(f"{', '.join(others)} also registers the orchestration plugin; uninstall it first (claude plugin uninstall <id>)")
-    if marketplace and Path(marketplace.get("path", "")).resolve() != root:
+    marketplace = marketplace_entry(claude)
+    if marketplace and marketplace_path(marketplace) != root:
         raise ValueError(f"{LOCAL_MARKETPLACE} is already registered from {marketplace.get('path')}; pass that --marketplace-dir or unregister it first")
     if not marketplace:
         claude_json(claude, "marketplace", "add", str(root), "--scope", "user")
@@ -483,14 +594,15 @@ def register(claude: list[str], root: Path) -> None:
         claude_json(claude, "install", PLUGIN_ID, "--scope", "user")
     elif not plugin.get("enabled"):
         claude_json(claude, "enable", PLUGIN_ID, "--scope", "user")
-    if not loads_from(registration(claude, root)[1], root):
+    if not loads_from(plugin_entry(claude)[0], root):
         raise ValueError(f"{PLUGIN_ID} is not enabled from {root / 'plugin'} after registration; check `claude plugin list`")
 
 
-def unregister(claude: list[str], root: Path) -> None:
+def unregister(claude: list[str] | None, root: Path) -> None:
     """Uninstall the plugin and remove the marketplace, only when they were registered from root."""
-    marketplace, plugin, _ = registration(claude, root)
-    if marketplace and Path(marketplace.get("path", "")).resolve() != root:
+    plugin, _ = plugin_entry(claude)
+    marketplace = marketplace_entry(claude)
+    if marketplace and marketplace_path(marketplace) != root:
         raise ValueError(f"{LOCAL_MARKETPLACE} is registered from {marketplace.get('path')}, not {root}; pass that --marketplace-dir")
     if plugin:
         claude_json(claude, "uninstall", PLUGIN_ID, "--scope", "user")
@@ -498,39 +610,45 @@ def unregister(claude: list[str], root: Path) -> None:
         claude_json(claude, "marketplace", "remove", LOCAL_MARKETPLACE, "--scope", "user")
 
 
-def build_profile(root: Path) -> str | None:
-    match = re.search(r"\((\S+) profile\)", str(load_json(root / ".claude-plugin/marketplace.json").get("description")))
-    return match[1] if match else None
-
-
-def build_is_current(root: Path, profile_name: str | None) -> bool:
-    """Whether root/plugin holds exactly what installing profile_name from this checkout would write."""
-    if profile_name not in {p.stem for p in PROFILES.glob("*.json")}:
-        return False
-    with tempfile.TemporaryDirectory() as td:
-        stage = Path(td) / "plugin"
-        shutil.copytree(PLUGIN, stage)
-        materialize_profile(stage, profile_data(profile_name))
-        files = lambda d: {p.relative_to(d): p.read_bytes() for p in d.rglob("*") if p.is_file()}
-        return files(stage) == files(root / "plugin")
+def build_profiles(root: Path) -> list[str]:
+    """The bundled profiles whose model/effort pairs the build at root carries in its skill and agent frontmatter (read
+    from the build, not from the manifest's prose); profiles with one topology build the same plugin and are all named."""
+    names = sorted(profile_names())
+    try:
+        wanted = {name: slots(profile_data(name)) for name in names}
+        carried = {rel: frontmatter(root / "plugin" / rel) for rel in set().union(*wanted.values())}
+        return [name for name in names if all(carried[rel].get(key) == value for rel, values in wanted[name].items() for key, value in values.items())]
+    except (OSError, ValueError):
+        return []
 
 
 def status(claude: list[str] | None, root: Path, config_dir: Path) -> list[tuple[bool, str]]:
     """Checks that together make orchestration the default: the rule file, and an enabled orchestration plugin (the
-    local build registered at user scope, or one plugin from another marketplace)."""
+    local build registered at user scope, or one plugin from another marketplace). Read-only: a directory this
+    installer would refuse to write is a failed check, not an error."""
     rule = rule_path(config_dir)
-    data = rule.read_bytes() if rule.is_file() else None
-    current = data == RULE_HEADER + RULE_TEMPLATE.read_bytes()
-    state = "current" if current else "absent" if data is None else "outdated" if data.startswith(RULE_HEADER) else "not written by this installer"
-    checks = [(current, f"rule {rule}: {state}")]
-    local = built_here(root)
-    if local:
-        profile = build_profile(root)
-        fresh = build_is_current(root, profile)
-        checks.append((fresh, f"marketplace {root}: profile {profile}, " + ("matches this checkout" if fresh else "differs from this checkout (rerun --user)")))
+    if is_link(rule) or is_link(rule.parent):
+        checks = [(False, f"rule {rule}: symlink (refused)")]
+    else:
+        data = rule.read_bytes() if rule.is_file() else None
+        current = data == RULE_HEADER + RULE_TEMPLATE.read_bytes()
+        state = "current" if current else "absent" if data is None else "outdated" if data.startswith(RULE_HEADER) else "not written by this installer"
+        checks = [(current, f"rule {rule}: {state}")]
+    root = root.expanduser()
+    linked = is_link(root)
+    root = root if linked else root.resolve()
+    rules = rules_dir(config_dir)
+    refused = "symlink (refused)" if linked else f"inside {rules} (refused)" if root == rules or rules in root.parents else "" if vacant(root) or built_here(root) else "not built by this installer (pass another --marketplace-dir)"
+    local = not refused and built_here(root)
+    if refused:
+        checks.append((False, f"marketplace {root}: {refused}"))
+    elif local:
+        names = build_profiles(root)
+        fresh = bool(names) and build(names[0]) == tree(root / "plugin")
+        checks.append((fresh, f"marketplace {root}: profile {' or '.join(names) or 'unknown'}, " + ("matches this checkout" if fresh else "differs from this checkout (rerun --user)")))
     if claude is None:
         return checks + [(False, "claude CLI not found: plugin registration not checked")]
-    _, plugin, others = registration(claude, root)
+    plugin, others = plugin_entry(claude)
     if local or plugin:
         where = plugin and (plugin.get("readFromFolder") or plugin.get("installPath"))
         checks.append((loads_from(plugin, root), f"plugin {PLUGIN_ID}: " + ("not installed at user scope" if plugin is None else f"{'enabled' if plugin.get('enabled') else 'disabled'}, loads from {where}")))
@@ -542,15 +660,21 @@ def status(claude: list[str] | None, root: Path, config_dir: Path) -> list[tuple
     return checks
 
 
+def profile_arg(value: str) -> str:
+    if not value.strip():
+        raise argparse.ArgumentTypeError("empty profile name")
+    return value
+
+
 def main() -> None:
     for stream in (sys.stdout, sys.stderr):
         stream.reconfigure(errors="backslashreplace")
     parser = argparse.ArgumentParser(description="Install Claude Orchestration into a project, or at user scope through a local marketplace.")
     parser.add_argument("target", type=Path, nargs="?", help="project directory (omit with --user, --default-rule alone, or --status)")
-    parser.add_argument("--profile")
+    parser.add_argument("--profile", type=profile_arg)
     parser.add_argument("--uninstall", action="store_true")
     parser.add_argument("--user", action="store_true", help="build a local marketplace for a user-scope install instead of a project install")
-    parser.add_argument("--marketplace-dir", type=Path, default=Path("~/.claude-orchestration"), help="local marketplace directory for --user")
+    parser.add_argument("--marketplace-dir", type=Path, help=f"local marketplace directory for --user and --status (default {DEFAULT_MARKETPLACE})")
     parser.add_argument("--default-rule", action="store_true", help=f"install (with --uninstall: remove) the default-orchestration rule, rules/{RULE_FILE} in the Claude config directory; alone or with --user")
     parser.add_argument("--register", action="store_true", help="with --user: add the marketplace and install/enable the plugin at user scope through the claude CLI (with --uninstall: remove both)")
     parser.add_argument("--status", action="store_true", help="report whether orchestration is the default for this user: rule, marketplace build, registration, conflicts")
@@ -565,22 +689,27 @@ def main() -> None:
 
 def run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     cfg = claude_config_dir()
-    found = shutil.which(args.claude)  # the full path, so a Windows npm shim (claude.cmd) runs too
-    claude = [found or args.claude]
+    found = find_claude(args.claude)
+    claude = [found] if found else None
+    root = (DEFAULT_MARKETPLACE if args.marketplace_dir is None else args.marketplace_dir).expanduser()
     if args.status:
-        if args.target or args.profile or args.uninstall or args.register:
-            parser.error("--status runs alone")
-        checks = status(claude if found else None, marketplace_dir(args.marketplace_dir), cfg)
+        if args.target or args.profile or args.uninstall or args.register or args.default_rule:
+            parser.error("--status runs alone (with --marketplace-dir and --claude at most)")
+        checks = status(claude, root, cfg)
         print("\n".join(("OK    " if ok else "TODO  ") + line for ok, line in checks))
         return 0 if all(ok for ok, _ in checks) else 1
     if args.register and not args.user:
         parser.error("--register needs --user")
+    if args.marketplace_dir is not None and not args.user:
+        parser.error("--marketplace-dir needs --user or --status")
+    if args.uninstall and args.profile:
+        parser.error("--uninstall takes no --profile")
     if args.user:
         if args.target:
             parser.error("--user takes no target directory")
         rule_dir = cfg if args.default_rule else None
         if args.uninstall:
-            root = marketplace_dir(args.marketplace_dir)
+            root = marketplace_dir(root, cfg)
             if args.register:
                 unregister(claude, root)
             left = uninstall_user(root, rule_dir)
@@ -592,10 +721,14 @@ def run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
             return 0
         if not args.profile:
             parser.error("--user needs --profile")
-        dest = install_user(args.marketplace_dir, args.profile, rule_dir)
+        dest = install_user(root, args.profile, rule_dir)
         print(f"Built local marketplace {LOCAL_MARKETPLACE} with plugin at {dest}" + (f"; default rule in {rule_path(cfg)}" if rule_dir else ""))
         if args.register:
-            register(claude, dest.parent)
+            try:
+                register(claude, dest.parent)
+            except (ValueError, OSError, subprocess.SubprocessError):
+                print(f"build kept at {dest.parent}; rerun with --register", file=sys.stderr)
+                raise
             print(f"Registered {PLUGIN_ID} at user scope; it loads in place, so restart Claude Code sessions to pick it up.")
         else:
             print(f"First time: claude plugin marketplace add {dest.parent} && claude plugin install {PLUGIN_ID} --scope user (or rerun with --register)")
@@ -604,6 +737,8 @@ def run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     if args.target is None:
         if not args.default_rule:
             parser.error("a project install needs a target directory (or use --user, --default-rule, or --status)")
+        if args.profile:
+            parser.error("--default-rule alone takes no --profile (a profile needs a target directory or --user)")
         set_rule(cfg, not args.uninstall)
         print(("Removed " if args.uninstall else "Installed ") + str(rule_path(cfg)))
         return 0

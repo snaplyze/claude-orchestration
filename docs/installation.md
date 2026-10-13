@@ -36,8 +36,9 @@ python scripts/install.py --status
 ```
 
 On Windows run `.\setup.ps1 -User -Profile max-20x-thorough -DefaultRule -Register`
-and `.\setup.ps1 -Status` (`-MarketplaceDir` overrides the directory);
-`./setup.sh --user …` works the same on macOS and Linux.
+and `.\setup.ps1 -Status` (`-MarketplaceDir` overrides the directory, `-Claude`
+names the `claude` executable; the launcher exits 1 when `python` is not on
+`PATH`); `./setup.sh --user …` works the same on macOS and Linux.
 
 - `--user` writes `~/.claude-orchestration` (`--marketplace-dir` to change it):
   `.claude-plugin/marketplace.json` (marketplace `orchestration-local`) and the
@@ -46,15 +47,18 @@ and `.\setup.ps1 -Status` (`-MarketplaceDir` overrides the directory);
   command (for example with another `--profile`) updates the installed plugin;
   restart sessions to pick it up. The directory must be new, empty, or one the
   installer built (its manifest is named `orchestration-local`); anything else,
-  and any symlink or junction there, is refused. Uninstall removes only what
-  the installer built and keeps the directory if other files remain in it.
+  any symlink or junction there, and a directory equal to or inside the config
+  directory's `rules/` (Claude Code would load the plugin's Markdown as rules)
+  is refused. Uninstall removes only what the installer built and keeps the
+  directory if other files remain in it.
 - `--default-rule` installs the rule as its own file,
   `rules/claude-orchestration.md` in the Claude config directory
   (`$CLAUDE_CONFIG_DIR` or `~/.claude`). User rules apply to every project, so
   the plugin's roles become the default way to delegate wherever project
   instructions do not say otherwise. The installer owns that file whole
   (rewritten on install, deleted on uninstall) and refuses to overwrite a file
-  of that name it did not write. The text is `scripts/default-orchestration-rule.md`.
+  of that name it did not write, or to write through a symlinked `rules/` or
+  rule file. The text is `scripts/default-orchestration-rule.md`.
 - `--register` runs `claude plugin marketplace add` and
   `claude plugin install orchestration@orchestration-local --scope user`
   (or `enable`) only when needed, so a rerun changes nothing, and then checks
@@ -62,13 +66,18 @@ and `.\setup.ps1 -Status` (`-MarketplaceDir` overrides the directory);
   refuses when `orchestration-local` is already registered from another
   directory or another enabled plugin is named `orchestration` (for example
   `orchestration@snaplyze-orchestration`): both register the same plugin.
-  Without `--register`, run those two commands yourself.
+  When registration fails after the build (for example, no `claude` on `PATH`;
+  `--claude` names the executable), the build is kept and `--register` can be
+  rerun. Without `--register`, run those two commands yourself.
 - `--status` prints one line per requirement, OK or TODO: the rule file is
   current, and an orchestration plugin is enabled. With a local build, the build must match what this checkout
-  would write (file by file) and the plugin must be enabled from it with no
+  would write (file by file; the profile is read back from the build's
+  frontmatter, so the names of profiles with the same topology appear together)
+  and the plugin must be enabled from it with no
   other `orchestration` plugin enabled; without one, exactly one enabled
-  `orchestration` plugin from any marketplace counts. It exits 1 while
-  anything is TODO.
+  `orchestration` plugin from any marketplace counts. It only reads: a
+  marketplace directory the installer would refuse (foreign content, a link,
+  inside `rules/`) is a TODO line. It exits 1 while anything is TODO.
 - `--user --uninstall --register` removes the registration only when it points
   at this marketplace directory.
 - `--default-rule` alone (no `--user`) installs or, with `--uninstall`, removes
