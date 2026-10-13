@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.5.0 — 2026-10-13
+
 - Default rule rewritten as concrete triggers per role (unfamiliar multi-file code → explorer, current external facts → researcher, independent implementation units → worker, reproduction and verification → tester, a material change before "done" → reviewer); it states that it applies in every repository, including ones without agent rules, ranks the roles above the built-in Explore/Plan/general-purpose agents, is for the main session only, and forbids `model`/`effort` overrides and forks for the roles. Agent descriptions gain "use proactively" cues. Measured with the new `--default-rule` smoke on Claude Code 2.1.296 (see `docs/verification.md`).
 - `worker`, `tester`, and `reviewer` list `PowerShell` next to `Bash`, so they have a shell on Windows without Git Bash.
 - `runtime_smoke.py --default-rule` measures the rule's effect over five cases; `--capabilities` checks that explorer can search and researcher can fetch; a failed run becomes a FAIL row and the cost spent is still reported; partial transcript lines are skipped; interactive mode uses a private tmux server; an empty model or a missing effort no longer passes.
