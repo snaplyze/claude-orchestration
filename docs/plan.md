@@ -9,14 +9,14 @@ Single planning entry point and task register (rules: `AGENTS.md`). One fact, on
 - GitHub: private vulnerability reporting, secret scanning with push protection, Dependabot alerts and security updates on; topics and description set; Projects off; `main` and `v*` tags protected by rulesets (no deletion or force-push; PRs with required checks for `main`), SHA-pinned actions required, merged branches deleted (A-40, applied 2026-10-13).
 - Second audit of 2026-10-13 at `1ca9bdc` (all seven areas, audit log below): no P0/P1; P2 — A-23, A-24, A-25, A-30, A-31, A-37; the rest P3; its documentation fixes are merged with it.
 - 2026-10-13: the owner told the agent to merge, decide A-33 and A-40, and work the whole queue; A-40 is applied (ledger), A-33 is decided in the installer-transactions PR. PRs #45, #46, #47 and #48 closed A-23, A-37, A-38, A-40, A-30, A-31, A-39, A-33, A-24, A-29 and A-35. PR #49 closed A-26 and A-32, PR #50 closed A-25, A-34, A-27 and A-28: the queue is empty; next is release 1.6.0 with the runtime smoke (hosted smoke on PRs #48 and #49: runs 38439913377 and 38440817388 PASS). Runtime outside Linux: tested since PR #54 — `runtime-smoke.yml` runs one job per OS; run 38457764094 on `windows-latest` and `macos-latest` PASS 27/27 each (roles, skill and its delegation row, read-only probes, `--agent`, the installed `max-20x-thorough` profile, a user install under `CLAUDE_CONFIG_DIR` with `--status` 3/3 and the `lookup` rule case), about $0.84 and $0.47 per run. Before that every runtime smoke had run on Ubuntu or the owner's Fedora only. Nothing is open or NOT_TESTED.
+- 2026-10-15: PR #57 (`eaedbaa`, owner decision) removed the checkout's `.claude/settings.json`, so the subagent spawn depth and secret-read denies come from user settings only (the owner's set neither: depth defaults to 3, `.env` is readable); PR #59 refreshed the CI, orchestration and access lines in `AGENTS.md`.
 
 ## Open tasks
 
-Status values: READY, BLOCKED, CONFIGURED_LOCAL (done locally, external acceptance pending), DONE (moved to the ledger below). Priority: P0 urgent, P1 high damage, P2 normal, P3 low risk. Every implementation task ends with the gates from `AGENTS.md` and an update of this table. The table is empty since release 1.6.0 (2026-10-13).
+Status values: READY, BLOCKED, CONFIGURED_LOCAL (done locally, external acceptance pending), DONE (moved to the ledger below). Priority: P0 urgent, P1 high damage, P2 normal, P3 low risk. Every implementation task ends with the gates from `AGENTS.md` and an update of this table. The table is empty since D-09 (2026-10-15).
 
 | ID | Pri | Status | Result and scope | Deps | Acceptance |
 |---|---|---|---|---|---|
-| D-09 | P3 | READY | Record PR #57 (`eaedbaa`, the checkout's `.claude/settings.json` removed): `CHANGELOG.md` has no Unreleased line for it while its 1.6.0 "Repository" line still describes that file as present; this file's current record does not mention it. Found 2026-10-15 by the agent-instructions refresh. Next: one Unreleased line (spawn depth and `.env` deny are user-level settings now) and one current-record sentence. | — | `CHANGELOG.md` Unreleased names the removal; `python scripts/doctor.py` and `python -m unittest discover -v` pass. |
 
 ## Done ledger
 
@@ -70,6 +70,7 @@ One line per finished task: result and where the evidence lives (commit, PR, CI 
 - A-34 — `parser.error` for the ignored flag combinations (`--marketplace-dir` default `None`); `setup.ps1` gains `-Claude`, strict mode and a python check; `find_claude()` takes only absolute hits for a bare name (`shutil.which` on Windows still inserts the cwd unless `NoDefaultCurrentDirectoryInExePath` is set, even with `path=`); Windows CI smokes `-Status` with a stub `claude.cmd` and a PATH without python; PR #50.
 - A-27 — `rule_writes` refuses a symlinked `rules/` directory, `--status` reports `symlink (refused)`, `marketplace_dir` refuses a root equal to or under `<config>/rules`; mutation check: each guard removed turns the suite red; `docs/security.md` names the directory; PR #50.
 - A-28 — `plugin_entry`/`marketplace_entry` replace `registration()` (no unused parameter); `--status` issues no `marketplace list` (stub test) and reports a foreign directory as TODO; a failed `--register` prints `build kept at …; rerun with --register`; one in-memory `build(profile)` feeds the stage and the status comparison, profile names come from the build's frontmatter (aliases listed together); `--status` with the real CLI median 1.05 → 0.81 s on the owner's machine, where one `claude plugin list` alone is 0.64 s, so the ≤ 0.55 s target was not reachable with one CLI call; PR #50.
+- D-09 — the removal of the checkout's `.claude/settings.json` (PR #57, `eaedbaa`) is recorded: a `CHANGELOG.md` Unreleased line and a current-record sentence; found by the `AGENTS.md` refresh (PR #59); PR #61.
 
 ## History (was → now → reason)
 
