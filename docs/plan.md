@@ -16,6 +16,7 @@ Status values: READY, BLOCKED, CONFIGURED_LOCAL (done locally, external acceptan
 
 | ID | Pri | Status | Result and scope | Deps | Acceptance |
 |---|---|---|---|---|---|
+| D-09 | P3 | READY | Record PR #57 (`eaedbaa`, the checkout's `.claude/settings.json` removed): `CHANGELOG.md` has no Unreleased line for it while its 1.6.0 "Repository" line still describes that file as present; this file's current record does not mention it. Found 2026-10-15 by the agent-instructions refresh. Next: one Unreleased line (spawn depth and `.env` deny are user-level settings now) and one current-record sentence. | — | `CHANGELOG.md` Unreleased names the removal; `python scripts/doctor.py` and `python -m unittest discover -v` pass. |
 
 ## Done ledger
 
