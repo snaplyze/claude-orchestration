@@ -3,6 +3,7 @@
 ## Unreleased
 
 - CI: the runtime smoke runs on Ubuntu, Windows and macOS (one job per OS); `runtime_smoke.py` resolves `--claude` to its full path like the installer does, so the Windows npm shim runs.
+- Repository: the checkout no longer carries `.claude/settings.json` (it set the subagent spawn depth to 1 and denied `.env` reads); such agent settings, `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH` or a `Read(./.env)` deny, belong in user settings (`~/.claude/settings.json`).
 
 ## 1.6.0 — 2026-10-13
 
