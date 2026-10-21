@@ -591,8 +591,26 @@ def loads_from(plugin: dict | None, root: Path) -> bool:
     return bool(plugin and plugin.get("enabled") and isinstance(folder, str) and Path(folder).resolve() == root / "plugin")
 
 
+def version_of(root: Path) -> str | None:
+    """The plugin.json version of the local build at root (None without one)."""
+    try:
+        return json.loads((root / "plugin/.claude-plugin/plugin.json").read_text(encoding="utf-8")).get("version")
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def stale_version(plugin: dict | None, root: Path) -> str | None:
+    """The version recorded for our plugin when the record is this build's (it reads from root/plugin) at another version
+    than the build's plugin.json; None otherwise, including a record or a build without a version."""
+    folder = plugin.get("readFromFolder") if plugin else None
+    recorded, built = (plugin or {}).get("version"), version_of(root)
+    same = isinstance(folder, str) and Path(folder).resolve() == root / "plugin"
+    return str(recorded) if same and recorded and built and recorded != built else None
+
+
 def register(claude: list[str] | None, root: Path) -> None:
-    """Add the local marketplace and install/enable its plugin at user scope with the claude CLI; a rerun changes nothing."""
+    """Add the local marketplace and install/enable its plugin at user scope with the claude CLI; a rerun changes nothing
+    unless the build's version differs from the installed record, which `claude plugin update` then refreshes."""
     plugin, others = plugin_entry(claude)
     if others:
         raise ValueError(f"{', '.join(others)} also registers the orchestration plugin; uninstall it first (claude plugin uninstall <id>)")
@@ -605,8 +623,12 @@ def register(claude: list[str] | None, root: Path) -> None:
         claude_json(claude, "install", PLUGIN_ID, "--scope", "user")
     elif not plugin.get("enabled"):
         claude_json(claude, "enable", PLUGIN_ID, "--scope", "user")
-    if not loads_from(plugin_entry(claude)[0], root):
-        raise ValueError(f"{PLUGIN_ID} is not enabled from {root / 'plugin'} after registration; check `claude plugin list`")
+        plugin = plugin_entry(claude)[0]
+    if stale_version(plugin, root):  # the record keeps the version first installed otherwise
+        claude_json(claude, "update", PLUGIN_ID, "--scope", "user")
+    after = plugin_entry(claude)[0]
+    if not loads_from(after, root) or stale_version(after, root):
+        raise ValueError(f"{PLUGIN_ID} is not enabled from {root / 'plugin'} at version {version_of(root)} after registration; check `claude plugin list`")
 
 
 def unregister(claude: list[str] | None, root: Path) -> None:
@@ -658,7 +680,10 @@ def status(claude: list[str] | None, root: Path, config_dir: Path) -> list[tuple
     plugin, others = plugin_entry(claude)
     if local or plugin:
         where = plugin and (plugin.get("readFromFolder") or plugin.get("installPath"))
-        checks.append((loads_from(plugin, root), f"plugin {PLUGIN_ID}: " + ("not installed at user scope" if plugin is None else f"{'enabled' if plugin.get('enabled') else 'disabled'}, loads from {where}")))
+        stale = stale_version(plugin, root) if local else None
+        state = "not installed at user scope" if plugin is None else f"{'enabled' if plugin.get('enabled') else 'disabled'}, loads from {where}"
+        hint = f", recorded as {stale} for build {version_of(root)} (rerun the install with --register, or claude plugin update {PLUGIN_ID} --scope user)"
+        checks.append((loads_from(plugin, root) and not stale, f"plugin {PLUGIN_ID}: {state}" + (hint if stale else "")))
         checks += [(False, f"conflict: {other} is also enabled") for other in others]
     elif len(others) == 1:
         checks.append((True, f"plugin {others[0]}: enabled"))
@@ -745,7 +770,7 @@ def run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
             print(f"Registered {PLUGIN_ID} at user scope; it loads in place, so restart Claude Code sessions to pick it up.")
         else:
             print(f"First time: claude plugin marketplace add {dest.parent} && claude plugin install {PLUGIN_ID} --scope user (or rerun with --register)")
-            print("Later runs update the plugin in place; restart Claude Code sessions to pick it up.")
+            print(f"Later runs update the plugin in place; after a version change also run claude plugin update {PLUGIN_ID} --scope user (or rerun with --register), then restart Claude Code sessions.")
         return 0
     if args.target is None:
         if not args.default_rule:

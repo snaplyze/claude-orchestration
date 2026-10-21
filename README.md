@@ -10,7 +10,7 @@ A Claude Code plugin that coordinates work through five bounded specialist subag
 | Component | Role | Default (`pro-balanced`) |
 |---|---|---|
 | `/orchestration:orchestrate` | Coordinator skill: routing, delegation, integration, final judgment | Opus · high |
-| `orchestration:explorer` | Read-only code mapping | Haiku · low |
+| `orchestration:explorer` | Read-only code mapping | Haiku · medium |
 | `orchestration:researcher` | Primary-source research | Sonnet · medium |
 | `orchestration:worker` | Bounded implementation, one writer per file | Sonnet · high |
 | `orchestration:tester` | Reproduction and verification | Sonnet · medium |
@@ -93,7 +93,7 @@ python scripts/runtime_smoke.py --roles "" --default-rule
 
 ## Update and remove
 
-Update a user install with `git pull` and the same `install.py --user …` command, then restart Claude Code sessions. Remove it with:
+Update a user install with `git pull` and the same `install.py --user …` command (with `--register`, which also refreshes the installed version; without it, run `claude plugin update orchestration@orchestration-local --scope user`), then restart Claude Code sessions. Remove it with:
 
 ```bash
 python scripts/install.py --user --uninstall --default-rule --register

@@ -8,7 +8,7 @@ Current platform documentation lists Claude Fable 5.1, Opus 5.5, Sonnet 5.5, and
 
 Effort is a separate control from model capability. Anthropic's current model overview and Claude Code model-configuration surfaces are not perfectly synchronized about some model defaults (notably Sonnet 5.5). This distribution therefore does not rely on an implicit default: it declares the intended level explicitly. Current Claude Code accepts `low`, `medium`, `high`, `xhigh`, and `max` where the active model supports them; `max` applies to the current session only unless set through `CLAUDE_CODE_EFFORT_LEVEL`, and the `effortLevel`/`modelSettings` settings keys reject it. In Claude Code, Opus 5.5, Sonnet 5.5, and Haiku 5.5 default to `medium` when nothing sets a level. Skill and subagent frontmatter can declare `effort`, which is the mechanism used by this distribution. `CLAUDE_CODE_EFFORT_LEVEL` has higher precedence; organization policy can cap the effective value. A top-level `effortLevel` in project settings (what the installer writes) applies to every model; the same key in user settings is ignored for Opus 5.5 and later, which use per-model levels under `modelSettings`.
 
-**Haiku 5.5 supports adaptive thinking and effort.** Released October 7, 2026, it replaces the earlier Haiku 4.5 limitation. Explorer now uses Haiku 5.5 with explicit `low` effort; Claude Code needs v2.1.293 or later for Haiku 5.5. Verify the resolved `haiku` alias with `/model` in the active Claude Code client.
+**Haiku 5.5 supports adaptive thinking and effort.** Released October 7, 2026, it replaces the earlier Haiku 4.5 limitation. Explorer uses Haiku 5.5 with explicit `medium` effort: the Haiku 5.5 prompting guide says that at `low` the model is more likely to skip a search or stop early in long agent prompts, and that `medium` roughly halved early stopping (research-sources 18); Claude Code needs v2.1.293 or later for Haiku 5.5. Verify the resolved `haiku` alias with `/model` in the active Claude Code client.
 
 ## Default topology
 
@@ -20,14 +20,14 @@ Local installer profiles materialize each skill/subagent frontmatter and, in a p
 
 | Profile | Orchestrator | Explorer | Researcher | Worker | Tester | Reviewer |
 |---|---|---|---|---|---|---|
-| `pro-economy` | Sonnet medium | Haiku low | Sonnet medium | Sonnet medium | Sonnet medium | Opus medium |
-| `pro-balanced` | Opus high | Haiku low | Sonnet medium | Sonnet high | Sonnet medium | Opus high |
-| `max-5x-balanced` | Opus high | Haiku low | Sonnet medium | Sonnet high | Sonnet medium | Opus high |
-| `max-20x-thorough` | Opus xhigh | Haiku low | Sonnet high | Sonnet high | Sonnet high | Opus xhigh |
-| `team-standard` | Sonnet high | Haiku low | Sonnet medium | Sonnet high | Sonnet medium | Opus high |
-| `team-premium` | Opus high | Haiku low | Sonnet medium | Sonnet high | Sonnet high | Opus high |
-| `enterprise-balanced` | Sonnet high | Haiku low | Sonnet medium | Sonnet high | Sonnet medium | Opus high |
-| `api-quality` | Opus xhigh | Haiku low | Sonnet high | Sonnet high | Sonnet high | Opus xhigh |
+| `pro-economy` | Sonnet medium | Haiku medium | Sonnet medium | Sonnet medium | Sonnet medium | Opus medium |
+| `pro-balanced` | Opus high | Haiku medium | Sonnet medium | Sonnet high | Sonnet medium | Opus high |
+| `max-5x-balanced` | Opus high | Haiku medium | Sonnet medium | Sonnet high | Sonnet medium | Opus high |
+| `max-20x-thorough` | Opus xhigh | Haiku medium | Sonnet high | Sonnet high | Sonnet high | Opus xhigh |
+| `team-standard` | Sonnet high | Haiku medium | Sonnet medium | Sonnet high | Sonnet medium | Opus high |
+| `team-premium` | Opus high | Haiku medium | Sonnet medium | Sonnet high | Sonnet high | Opus high |
+| `enterprise-balanced` | Sonnet high | Haiku medium | Sonnet medium | Sonnet high | Sonnet medium | Opus high |
+| `api-quality` | Opus xhigh | Haiku medium | Sonnet high | Sonnet high | Sonnet high | Opus xhigh |
 
 Profile names are engineering presets, **not** promises that a subscription grants a particular model. If Opus is unavailable, choose another profile or an explicit confirmed fallback rather than silently changing the installed topology.
 

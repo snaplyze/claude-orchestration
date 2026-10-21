@@ -62,18 +62,24 @@ names the `claude` executable; the launcher exits 1 when `python` is not on
 - `--register` runs `claude plugin marketplace add` and
   `claude plugin install orchestration@orchestration-local --scope user`
   (or `enable`) only when needed, so a rerun changes nothing, and then checks
-  that the plugin is enabled and loads from the marketplace `plugin/`. It
+  that the plugin is enabled and loads from the marketplace `plugin/` at the
+  build's version. When the installed record carries another version than the
+  build's `plugin.json` (an upgrade or a downgrade), it runs
+  `claude plugin update`, which refreshes the record; Claude Code marks the old
+  cached copy `.orphaned_at`. It
   refuses when `orchestration-local` is already registered from another
   directory or another enabled plugin is named `orchestration` (for example
   `orchestration@snaplyze-orchestration`): both register the same plugin.
   When registration fails after the build (for example, no `claude` on `PATH`;
   `--claude` names the executable), the build is kept and `--register` can be
-  rerun. Without `--register`, run those two commands yourself.
+  rerun. Without `--register`, run those two commands yourself, and
+  `claude plugin update orchestration@orchestration-local --scope user` after a
+  version change.
 - `--status` prints one line per requirement, OK or TODO: the rule file is
   current, and an orchestration plugin is enabled. With a local build, the build must match what this checkout
   would write (file by file; the profile is read back from the build's
   frontmatter, so the names of profiles with the same topology appear together)
-  and the plugin must be enabled from it with no
+  and the plugin must be enabled from it, recorded at the build's version, with no
   other `orchestration` plugin enabled; without one, exactly one enabled
   `orchestration` plugin from any marketplace counts. It only reads: a
   marketplace directory the installer would refuse (foreign content, a link,
