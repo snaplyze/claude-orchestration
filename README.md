@@ -10,7 +10,7 @@ A Claude Code plugin that coordinates work through five bounded specialist subag
 | Component | Role | Default (`pro-balanced`) |
 |---|---|---|
 | `/orchestration:orchestrate` | Coordinator skill: routing, delegation, integration, final judgment | Opus · high |
-| `orchestration:explorer` | Read-only code mapping | Haiku · low |
+| `orchestration:explorer` | Read-only code mapping | Haiku · medium |
 | `orchestration:researcher` | Primary-source research | Sonnet · medium |
 | `orchestration:worker` | Bounded implementation, one writer per file | Sonnet · high |
 | `orchestration:tester` | Reproduction and verification | Sonnet · medium |

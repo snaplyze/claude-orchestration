@@ -591,8 +591,17 @@ def loads_from(plugin: dict | None, root: Path) -> bool:
     return bool(plugin and plugin.get("enabled") and isinstance(folder, str) and Path(folder).resolve() == root / "plugin")
 
 
+def version_of(root: Path) -> str | None:
+    """The plugin.json version of the local build at root (None without one)."""
+    try:
+        return json.loads((root / "plugin/.claude-plugin/plugin.json").read_text(encoding="utf-8")).get("version")
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
 def register(claude: list[str] | None, root: Path) -> None:
-    """Add the local marketplace and install/enable its plugin at user scope with the claude CLI; a rerun changes nothing."""
+    """Add the local marketplace and install/enable its plugin at user scope with the claude CLI; a rerun changes nothing
+    unless the build's version differs from the installed record, which `claude plugin update` then refreshes."""
     plugin, others = plugin_entry(claude)
     if others:
         raise ValueError(f"{', '.join(others)} also registers the orchestration plugin; uninstall it first (claude plugin uninstall <id>)")
@@ -605,6 +614,8 @@ def register(claude: list[str] | None, root: Path) -> None:
         claude_json(claude, "install", PLUGIN_ID, "--scope", "user")
     elif not plugin.get("enabled"):
         claude_json(claude, "enable", PLUGIN_ID, "--scope", "user")
+    if plugin is not None and plugin.get("version") != version_of(root):  # the record keeps the version first installed otherwise
+        claude_json(claude, "update", PLUGIN_ID, "--scope", "user")
     if not loads_from(plugin_entry(claude)[0], root):
         raise ValueError(f"{PLUGIN_ID} is not enabled from {root / 'plugin'} after registration; check `claude plugin list`")
 
@@ -658,7 +669,9 @@ def status(claude: list[str] | None, root: Path, config_dir: Path) -> list[tuple
     plugin, others = plugin_entry(claude)
     if local or plugin:
         where = plugin and (plugin.get("readFromFolder") or plugin.get("installPath"))
-        checks.append((loads_from(plugin, root), f"plugin {PLUGIN_ID}: " + ("not installed at user scope" if plugin is None else f"{'enabled' if plugin.get('enabled') else 'disabled'}, loads from {where}")))
+        stale = plugin is not None and plugin.get("version") != version_of(root)
+        state = "not installed at user scope" if plugin is None else f"{'enabled' if plugin.get('enabled') else 'disabled'}, loads from {where}"
+        checks.append((loads_from(plugin, root) and not stale, f"plugin {PLUGIN_ID}: {state}" + (f", recorded as {plugin.get('version')} for build {version_of(root)} (rerun --user --register)" if stale else "")))
         checks += [(False, f"conflict: {other} is also enabled") for other in others]
     elif len(others) == 1:
         checks.append((True, f"plugin {others[0]}: enabled"))

@@ -6,7 +6,7 @@
   "agents": {
     "explorer": [
       "haiku",
-      "low"
+      "medium"
     ],
     "researcher": [
       "sonnet",
