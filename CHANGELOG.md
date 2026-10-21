@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.0 — 2026-10-21
 
 - Installer: `--user --register` runs `claude plugin update` when the installed record carries another version than the build (before, `claude plugin list` kept reporting the version first installed, such as 1.5.0 under a 1.6.0 build), and `--status` reports such a record as TODO.
 - Profiles: explorer runs Haiku 5.5 at `medium` instead of `low` in all eight profiles and the bundled frontmatter; Anthropic's Haiku 5.5 guide says `low` makes the model more likely to skip a search or stop early in long agent prompts and that `medium` roughly halved early stopping.
