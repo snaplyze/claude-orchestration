@@ -64,6 +64,7 @@ class DistributionTests(unittest.TestCase):
             p=t/"profiles/team-standard.json"; d=json.loads(p.read_text()); del d["agents"]["researcher"]; d["skill"]["model"]="haiku"; d["skill"]["maxTurns"]="9"; p.write_text(json.dumps(d))
             p=t/"profiles/max-5x-balanced.json"; d=json.loads(p.read_text()); p.write_text(json.dumps({**d,"settings":{"model":"opus","effortLevel":"high"}}))  # the pre-1.6 key
             install.patch_frontmatter(t/"plugin/agents/researcher.md",{"description":"a\u2028model: evil"})
+            install.patch_frontmatter(t/"plugin/agents/tester.md",{"maxTurns":"12"})
             errors=doctor.check(t)
             self.assertTrue(any("pro-economy.json tester" in e for e in errors),errors)
             self.assertTrue(any("must match pro-balanced.json" in e for e in errors),errors)
@@ -72,7 +73,7 @@ class DistributionTests(unittest.TestCase):
             self.assertTrue(any("must name exactly the roles" in e and "'qa'" in e for e in errors),errors)
             for message in ("marketplace.json must list only orchestration from ./plugin","duplicate row pro-economy","row pro-legacy has no profile","plugin name 'claude-x' is reserved","expected 8 profiles, found 7",
                             "SKILL.md: unsupported model 'haiku'","plugin agents must be exactly","team-standard.json: incomplete agents","team-standard.json skill: unsupported model 'haiku'",
-                            "max-5x-balanced.json: invalid schema","researcher.md: control or separator character in description","team-standard.json skill: keys must be model and effort"):
+                            "max-5x-balanced.json: invalid schema","researcher.md: control or separator character in description","tester.md: maxTurns cuts the run off mid-task","team-standard.json skill: keys must be model and effort"):
                 self.assertTrue(any(message in e for e in errors),(message,errors))
             self.assertFalse(any("researcher.md: unsupported model" in e for e in errors),errors)  # the separator stays inside the description value
     def test_runtime_smoke_judges_hook_and_transcript_evidence(self):

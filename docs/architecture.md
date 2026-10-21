@@ -4,22 +4,22 @@ The main Claude Code session owns the user conversation. Invoking `/orchestratio
 
 The marketplace distribution uses the balanced topology:
 
-| Component | Model alias | Effort | Turn cap | Intent |
-|---|---|---:|---:|---|
-| orchestrator skill | opus | high | session-owned | decomposition, routing, integration, final judgment |
-| explorer | haiku | low | 12 | focused repository mapping |
-| researcher | sonnet | medium | 16 | primary-source research |
-| worker | sonnet | high | 30 | bounded implementation |
-| tester | sonnet | medium | 22 | reproduction and verification |
-| reviewer | opus | high | 18 | independent material-risk review |
+| Component | Model alias | Effort | Intent |
+|---|---|---:|---|
+| orchestrator skill | opus | high | decomposition, routing, integration, final judgment |
+| explorer | haiku | low | focused repository mapping |
+| researcher | sonnet | medium | primary-source research |
+| worker | sonnet | high | bounded implementation |
+| tester | sonnet | medium | reproduction and verification |
+| reviewer | opus | high | independent material-risk review |
 
-Local installer profiles replace the model/effort pairs while keeping role behavior and bounded turn caps. The orchestrator adapts **routing**, not effort: root-only vs delegation, role selection, parallel read-only work, serialization of writers, and whether a larger Claude Code mechanism is warranted.
+Local installer profiles replace the model/effort pairs while keeping role behavior. The orchestrator adapts **routing**, not effort: root-only vs delegation, role selection, parallel read-only work, serialization of writers, and whether a larger Claude Code mechanism is warranted.
 
 ## Why this shape
 
 - Subagents have isolated context and return summaries, which protects the main context from exploration noise.
 - One writer owns a file/subsystem at a time. Read-only investigation can run in parallel.
-- `maxTurns` bounds runaway delegated loops without pretending to be a token budget.
+- No role sets `maxTurns`; the brief bounds the work. At the cap Claude Code stops a subagent without a warning or a closing turn and returns its last text marked as partial, so the coordinator has to resume it with `SendMessage` (`/en/sub-agents`; research-sources 18). Under the 1.6.0 caps (explorer 12, researcher 16, worker 30, tester 22, reviewer 18) the cap cut the first run in the middle of a tool call in half of 751 role runs on the owner's machine (`docs/verification.md`, results of 2026-10-21). The agents of Anthropic's `feature-dev` and `pr-review-toolkit` plugins set no cap either. Each role makes independent reads and searches in one turn, keeps to the brief, and ends with its report, or with what is done and what remains when the work outgrows the brief. A runaway delegate is stopped like any task (`x` in `/tasks`, or Claude's `TaskStop` tool); headless runs can add `--max-budget-usd`, which also stops background subagents still running.
 - `CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY` is a runtime ceiling for parallel read-only tools/subagents (currently defaults to 10); the plugin does not override it or try to fill it.
 - Agent Teams remain an explicit escalation when independent sessions need peer-to-peer communication.
 - Dynamic workflows and `/batch` are useful for large repeatable or worktree-isolated jobs, but are not silently substituted for normal delegation.

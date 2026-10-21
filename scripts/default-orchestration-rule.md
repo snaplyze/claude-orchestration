@@ -16,6 +16,6 @@ How to delegate:
 
 - Use these roles instead of the built-in Explore, Plan, or general-purpose agents for the same job; fall back to built-ins only when the roles are unavailable.
 - Always set `subagent_type` to the role. Never pass `model` or `effort`, and never fork for a role: either bypasses the installed profile.
-- Brief each delegate with the objective, relevant paths, allowed reads, writes, and external actions, acceptance checks, and a stop condition. Delegation never expands authority.
+- Brief each delegate with the objective, relevant paths, allowed reads, writes, and external actions, acceptance checks, and a stop condition, sized so one delegate can finish it. Delegation never expands authority.
 - Keep one writer per file. Wait for every delegate you depend on, then inspect the final diff and run the checks yourself; report only what actually ran.
 - `/orchestration:orchestrate` is started by the user. When a message begins with it, follow its routing; never imitate invoking it.

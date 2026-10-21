@@ -103,7 +103,7 @@ python scripts/install.py --user --uninstall --default-rule --register
 
 | Document | Contents |
 |---|---|
-| [Architecture](docs/architecture.md) | Topology, routing, turn caps, permission boundary |
+| [Architecture](docs/architecture.md) | Topology, routing, why no turn caps, permission boundary |
 | [Models and plans](docs/models-and-plans.md) | Profiles, effort precedence, subscription boundaries |
 | [Installation](docs/installation.md) | All install modes, rollback, removal |
 | [Verification](docs/verification.md) | Static and runtime checks, CI, recorded results, upstream caveats |
