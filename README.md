@@ -93,7 +93,7 @@ python scripts/runtime_smoke.py --roles "" --default-rule
 
 ## Update and remove
 
-Update a user install with `git pull` and the same `install.py --user …` command, then restart Claude Code sessions. Remove it with:
+Update a user install with `git pull` and the same `install.py --user …` command (with `--register`, which also refreshes the installed version; without it, run `claude plugin update orchestration@orchestration-local --scope user`), then restart Claude Code sessions. Remove it with:
 
 ```bash
 python scripts/install.py --user --uninstall --default-rule --register

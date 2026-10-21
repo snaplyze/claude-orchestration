@@ -42,7 +42,7 @@ Model and plan references:
 Important conclusions:
 
 1. Plugin namespace `orchestration` is deliberate: `claude plugin validate` refuses names that impersonate Anthropic — the prefixes `claude-`, `anthropic-`, `anthropics-` and `cc-plugin-`, the exact names `claude`, `anthropic`, `anthropics`, `claude-code` and `claude-mods`, and `official` next to `claude`/`anthropic`, case-insensitively (`https://code.claude.com/docs/en/plugins/manifest-reference#name`); Claude Code still loads a plugin whose name the validator refuses. Repository names are independent.
-2. Explorer uses Haiku 5.5 with explicit `medium` effort (`low` until 1.7.0; see 18); other fixed-effort roles use Sonnet/Opus.
+2. Explorer uses Haiku 5.5 with explicit `medium` effort (`low` through 1.6.0; see 18); other fixed-effort roles use Sonnet/Opus.
 3. `max` is session-only unless set through `CLAUDE_CODE_EFFORT_LEVEL`; settings keys reject it, so persistent profiles stop at `xhigh`.
 4. Plugin subagents ignore `hooks`, `mcpServers`, `permissionMode`, and `initialPrompt` frontmatter for security (`/en/plugins/components`).
 5. Agent Teams are experimental and disabled by default; they cost more context/usage than ordinary subagents.

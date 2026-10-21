@@ -386,7 +386,7 @@ class DistributionTests(unittest.TestCase):
             elif a[1:3]==["marketplace","add"]: m[json.loads((Path(a[3])/".claude-plugin/marketplace.json").read_text())["name"]]=a[3]
             elif a[1:3]==["marketplace","remove"]: m.pop(a[3])
             elif a[1]=="list": r=[{"id":k,"scope":"user",**v} for k,v in p.items()]
-            elif a[1] in ("install","update"): folder=Path(m[a[2].split("@")[1]])/"plugin"; p[a[2]]={**p.get(a[2],{"enabled":True}),"readFromFolder":str(folder),"version":json.loads((folder/".claude-plugin/plugin.json").read_text())["version"]}
+            elif a[1]=="install" or a[1]=="update" and not st.get("frozen"): folder=Path(m[a[2].split("@")[1]])/"plugin"; p.setdefault(a[2],{"enabled":True}).update(readFromFolder=str(folder),version=json.loads((folder/".claude-plugin/plugin.json").read_text())["version"])
             elif a[1]=="enable": p[a[2]]["enabled"]=True
             elif a[1]=="uninstall": p.pop(a[2])
             return subprocess.CompletedProcess(cmd,0,json.dumps(r,indent=2 if isinstance(r,list) else None)+"\n","")
@@ -401,12 +401,17 @@ class DistributionTests(unittest.TestCase):
             st["plugins"][install.PLUGIN_ID]["enabled"]=False; install.register(claude,mkt); self.assertEqual(changes()[-1],"enable")
             st["plugins"][install.PLUGIN_ID]["version"]="0.9.0"; checks=install.status(claude,mkt,cfg); self.assertFalse(checks[-1][0]); self.assertIn("recorded as 0.9.0 for build",checks[-1][1])
             install.register(claude,mkt); self.assertEqual(changes()[-1],"update"); self.assertTrue(all(ok for ok,_ in install.status(claude,mkt,cfg)))
+            rec=st["plugins"][install.PLUGIN_ID]; rec.update(enabled=False,version="0.9.0"); install.register(claude,mkt); self.assertEqual(changes()[-2:],["enable","update"])
+            rec["version"]="0.9.0"; st["frozen"]=True
+            with self.assertRaisesRegex(ValueError,"at version"): install.register(claude,mkt)  # an update that leaves the record stale is no success
+            st["frozen"]=False; del rec["version"]; n=len(changes()); install.register(claude,mkt); self.assertEqual(len(changes()),n); self.assertTrue(all(ok for ok,_ in install.status(claude,mkt,cfg)))  # a record without a version is not judged
             install.unregister(claude,mkt); self.assertEqual((st["marketplaces"],st["plugins"]),({},{}))
             reset(**{"orchestration@snaplyze-orchestration":{"enabled":True}})
             with self.assertRaisesRegex(ValueError,"also registers"): install.register(claude,mkt)
             self.assertIn("conflict: orchestration@snaplyze-orchestration is also enabled",[line for _,line in install.status(claude,mkt,cfg)])
-            reset(); st["marketplaces"]["orchestration-local"]=str(t/"elsewhere"); st["plugins"][install.PLUGIN_ID]={"enabled":True,"readFromFolder":str(t/"elsewhere/plugin")}
+            reset(); st["marketplaces"]["orchestration-local"]=str(t/"elsewhere"); st["plugins"][install.PLUGIN_ID]={"enabled":True,"readFromFolder":str(t/"elsewhere/plugin"),"version":"0.9.0"}
             with self.assertRaisesRegex(ValueError,"already registered from"): install.register(claude,mkt)
+            self.assertNotIn("recorded as",install.status(claude,mkt,cfg)[-1][1])  # a record of another folder gets no version hint
             with self.assertRaisesRegex(ValueError,"registered from"): install.unregister(claude,t/"typo")
             self.assertEqual(changes(),[]); self.assertIn(install.PLUGIN_ID,st["plugins"])
             cfg2=t/"cfg2"; install.set_rule(cfg2,True); reset(**{"orchestration@snaplyze-orchestration":{"enabled":True}})
