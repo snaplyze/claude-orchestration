@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Roles: no `maxTurns` (was 12/16/30/22/18). At the cap Claude Code stops a subagent without a closing turn and hands back a partial result, so the coordinator kept resuming it; on the owner's machine it cut the first run in the middle of a tool call in half of 751 role runs (378). Each role now makes independent reads and searches in one turn and ends with its report, or with what is done and what remains when the work outgrows the brief; the skill and the default rule size each assignment for one delegate. `doctor.py` refuses `maxTurns` in the shipped frontmatter, and `docs/architecture.md` drops the turn-cap column.
 - CI: the runtime smoke runs on Ubuntu, Windows and macOS (one job per OS); `runtime_smoke.py` resolves `--claude` to its full path like the installer does, so the Windows npm shim runs.
 - Repository: the checkout no longer carries `.claude/settings.json` (it set the subagent spawn depth to 1 and denied `.env` reads); such agent settings, `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH` or a `Read(./.env)` deny, belong in user settings (`~/.claude/settings.json`).
 

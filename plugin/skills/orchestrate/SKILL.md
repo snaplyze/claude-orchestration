@@ -33,7 +33,7 @@ Prefer ordinary subagents. Agent Teams are experimental, use significantly more 
 Work directly on a single file, a quick lookup, or strictly sequential steps; do not spawn every role automatically.
 
 ## Delegation contract
-Every brief includes objective, relevant context/paths, read/write scope, permitted Git/external actions, constraints, deliverable, acceptance checks, and stop condition. Delegation never expands authority. Always set `subagent_type` to the role. Never pass `model` or `effort`, and never fork for a role: either bypasses the installed profile. Keep one implementation owner per file/subsystem and avoid overlapping writers.
+Every brief includes objective, relevant context/paths, read/write scope, permitted Git/external actions, constraints, deliverable, acceptance checks, and stop condition. Size each assignment so one delegate can finish it: the roles carry no turn cap, so the brief and its stop condition bound the work. Delegation never expands authority. Always set `subagent_type` to the role. Never pass `model` or `effort`, and never fork for a role: either bypasses the installed profile. Keep one implementation owner per file/subsystem and avoid overlapping writers.
 
 Start independent read-only assignments early when useful. Serialize dependent edits. Prefer concise returned evidence over raw logs. Resume a useful subagent rather than creating another one for a closely related task.
 

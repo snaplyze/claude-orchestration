@@ -47,7 +47,7 @@ def check(root: Path = R) -> list[str]:
         if not market.get("name") or reserved_name(str(market["name"])): errors.append("marketplace.json: missing or reserved marketplace name")
     except Exception as e: errors.append(f"marketplace: {e}")
 
-    shipped, turns, documented = {}, {}, {}
+    shipped, documented = {}, {}
     agent_files = {p.stem: p for p in (root / "plugin/agents").glob("*.md")}
     if set(agent_files) != AGENTS: errors.append(f"plugin agents must be exactly {sorted(AGENTS)}")
     for key, path in [("skill", root / "plugin/skills/orchestrate/SKILL.md"), *agent_files.items()]:
@@ -55,8 +55,8 @@ def check(root: Path = R) -> list[str]:
         except Exception as e: errors.append(f"{path.name}: {e}"); continue
         errors += pair_errors(path.name, d.get("model"), d.get("effort"), ROOT_MODELS if key == "skill" else MODELS)
         errors += [f"{path.name}: control or separator character in {k}" for k, v in d.items() if UNSAFE.search(v)]
+        if "maxTurns" in d: errors.append(f"{path.name}: maxTurns cuts the run off mid-task with a partial result; the brief bounds the work (docs/architecture.md)")
         shipped[key] = [d.get("model"), d.get("effort")]
-        turns[key] = d.get("maxTurns", "session-owned")
 
     profiles = sorted((root / "profiles").glob("*.json"))
     if len(profiles) != PROFILE_COUNT: errors.append(f"expected {PROFILE_COUNT} profiles, found {len(profiles)}")
@@ -82,7 +82,7 @@ def check(root: Path = R) -> list[str]:
         if ROLE_LINE.findall(rule) != ROLE_LINE.findall((root / SKILL_DOC).read_text(encoding="utf-8")):
             errors.append(f"the five role lines (- `orchestration:<role>`: ...) of {RULE_DOC} and {SKILL_DOC} must be identical and in the same order")
     except OSError as e: errors.append(f"rule: {e}")
-    return errors + doc_errors(root, documented, shipped, turns)
+    return errors + doc_errors(root, documented, shipped)
 
 
 def changelog_errors(root: Path, version) -> list[str]:
@@ -110,7 +110,7 @@ def table_rows(path: Path, first_cell: str, errors: list[str]) -> dict[str, list
     return rows
 
 
-def doc_errors(root: Path, documented: dict, shipped: dict, turns: dict) -> list[str]:
+def doc_errors(root: Path, documented: dict, shipped: dict) -> list[str]:
     """The topology tables in the docs are derived data: they must match the profiles and plugin frontmatter."""
     errors = []
     profile_rows = table_rows(root / "docs/models-and-plans.md", r"`[a-z0-9-]+`", errors)
@@ -120,8 +120,8 @@ def doc_errors(root: Path, documented: dict, shipped: dict, turns: dict) -> list
     errors += [f"docs/models-and-plans.md: row {name} has no profile" for name in sorted(set(profile_rows) - set(documented))]
     component_rows = table_rows(root / "docs/architecture.md", "orchestrator skill|" + "|".join(ROLE_ORDER), errors)
     for key in ("skill", *ROLE_ORDER):
-        want = [*shipped.get(key, ["?", "?"]), str(turns.get(key))]
-        found = component_rows.get("orchestrator skill" if key == "skill" else key, [])[:3]
+        want = shipped.get(key, ["?", "?"])
+        found = component_rows.get("orchestrator skill" if key == "skill" else key, [])[:2]
         if found != want: errors.append(f"docs/architecture.md: row {key} must start with {want}, found {found}")
     return errors
 
